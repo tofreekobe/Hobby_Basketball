@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hobby Basketball AI</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+        background: #f6f7f9;
+        color: #1f2933;
+      }
+      body {
+        margin: 0;
+      }
+      .shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 20px;
+        background: #111827;
+        color: white;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+        padding: 16px;
+      }
+      aside,
+      section {
+        background: white;
+        border: 1px solid #d8dee8;
+        border-radius: 8px;
+        padding: 16px;
+      }
+      label {
+        display: block;
+        font-weight: 650;
+        font-size: 13px;
+        margin-top: 12px;
+      }
+      input,
+      textarea {
+        box-sizing: border-box;
+        width: 100%;
+        margin-top: 6px;
+        border: 1px solid #c7d0dd;
+        border-radius: 6px;
+        padding: 9px 10px;
+        font: inherit;
+      }
+      textarea {
+        min-height: 220px;
+        resize: vertical;
+        font-family: Consolas, monospace;
+      }
+      button {
+        margin-top: 14px;
+        width: 100%;
+        border: 0;
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #0f766e;
+        color: white;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #115e59;
+      }
+      .status {
+        color: #6b7280;
+        font-size: 13px;
+      }
+      pre {
+        background: #0b1120;
+        color: #dbeafe;
+        min-height: 360px;
+        overflow: auto;
+        border-radius: 8px;
+        padding: 14px;
+      }
+      @media (max-width: 860px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <strong>篮球 AI 剪辑工作台</strong>
+        <span class="status" id="health">未连接</span>
+      </header>
+      <main>
+        <aside>
+          <label>视频路径</label>
+          <input id="videoPath" value="game.mp4" />
+          <label>命中前秒数</label>
+          <input id="preSeconds" type="number" step="0.1" min="0" value="5.0" />
+          <label>命中后秒数</label>
+          <input id="postSeconds" type="number" step="0.1" min="0.1" value="1.5" />
+          <label>进球事件 JSON</label>
+          <textarea id="events">[
+  {"id": "make-1", "video_path": "game.mp4", "t_make": 10.0, "confidence": 0.8},
+  {"id": "make-2", "video_path": "game.mp4", "t_make": 24.0, "confidence": 0.9}
+]</textarea>
+          <button onclick="planClips()">规划剪辑片段</button>
+        </aside>
+        <section>
+          <h2>片段规划结果</h2>
+          <p class="status">MVP 当前支持 reviewed events -> clips。真实 YOLO 检测、标定和剪映草稿导出会接在同一工作台上。</p>
+          <pre id="output">等待规划...</pre>
+        </section>
+      </main>
+    </div>
+    <script>
+      async function refreshHealth() {
+        const response = await fetch("/api/health");
+        const data = await response.json();
+        document.getElementById("health").textContent = data.status === "ok" ? "后端已连接" : "后端异常";
+      }
+      async function planClips() {
+        const payload = {
+          video_path: document.getElementById("videoPath").value,
+          pre_seconds: Number(document.getElementById("preSeconds").value),
+          post_seconds: Number(document.getElementById("postSeconds").value),
+          events: JSON.parse(document.getElementById("events").value)
+        };
+        const response = await fetch("/api/plan-clips", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+      }
+      refreshHealth().catch(() => {
+        document.getElementById("health").textContent = "后端未连接";
+      });
+    </script>
+  </body>
+</html>
