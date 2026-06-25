@@ -8,7 +8,7 @@
       :root {
         color-scheme: light;
         font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
-        background: #f6f7f9;
+        background: #f5f7fb;
         color: #1f2933;
       }
       body {
@@ -29,7 +29,7 @@
       }
       main {
         display: grid;
-        grid-template-columns: 320px 1fr;
+        grid-template-columns: 340px 1fr;
         gap: 16px;
         padding: 16px;
       }
@@ -47,7 +47,7 @@
         margin-top: 12px;
       }
       input,
-      textarea {
+      select {
         box-sizing: border-box;
         width: 100%;
         margin-top: 6px;
@@ -55,11 +55,6 @@
         border-radius: 6px;
         padding: 9px 10px;
         font: inherit;
-      }
-      textarea {
-        min-height: 220px;
-        resize: vertical;
-        font-family: Consolas, monospace;
       }
       button {
         margin-top: 14px;
@@ -72,23 +67,60 @@
         font-weight: 700;
         cursor: pointer;
       }
+      button.secondary {
+        background: #334155;
+      }
       button:hover {
-        background: #115e59;
+        filter: brightness(0.92);
+      }
+      button:disabled {
+        background: #94a3b8;
+        cursor: not-allowed;
       }
       .status {
         color: #6b7280;
         font-size: 13px;
       }
+      .workspace {
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        gap: 14px;
+      }
+      .video-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      video {
+        width: 100%;
+        max-height: 420px;
+        background: #0b1120;
+        border-radius: 8px;
+      }
       pre {
         background: #0b1120;
         color: #dbeafe;
-        min-height: 360px;
+        min-height: 210px;
         overflow: auto;
         border-radius: 8px;
         padding: 14px;
       }
-      @media (max-width: 860px) {
-        main {
+      .hint {
+        margin: 8px 0 0;
+        color: #64748b;
+        font-size: 13px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .error {
+        color: #b91c1c;
+      }
+      @media (max-width: 980px) {
+        main,
+        .video-grid {
           grid-template-columns: 1fr;
         }
       }
@@ -102,47 +134,170 @@
       </header>
       <main>
         <aside>
-          <label>视频路径</label>
-          <input id="videoPath" value="game.mp4" />
+          <label>选择篮球录像</label>
+          <input id="videoFile" type="file" accept="video/*" />
+          <button onclick="uploadVideo()">上传并生成预览</button>
+          <p class="hint" id="uploadStatus">尚未选择视频。</p>
+
           <label>命中前秒数</label>
           <input id="preSeconds" type="number" step="0.1" min="0" value="5.0" />
           <label>命中后秒数</label>
           <input id="postSeconds" type="number" step="0.1" min="0.1" value="1.5" />
-          <label>进球事件 JSON</label>
-          <textarea id="events">[
-  {"id": "make-1", "video_path": "game.mp4", "t_make": 10.0, "confidence": 0.8},
-  {"id": "make-2", "video_path": "game.mp4", "t_make": 24.0, "confidence": 0.9}
-]</textarea>
-          <button onclick="planClips()">规划剪辑片段</button>
+
+          <div class="row">
+            <div>
+              <label>篮筐中心 X</label>
+              <input id="rimX" type="number" value="100" />
+            </div>
+            <div>
+              <label>篮筐中心 Y</label>
+              <input id="rimY" type="number" value="100" />
+            </div>
+          </div>
+          <p class="hint">上传后暂停在篮筐清晰的画面，点击左侧视频即可自动填入中心坐标。</p>
+
+          <div class="row">
+            <div>
+              <label>篮筐半宽</label>
+              <input id="rimHalfWidth" type="number" value="30" min="1" />
+            </div>
+            <div>
+              <label>篮筐半高</label>
+              <input id="rimHalfHeight" type="number" value="12" min="1" />
+            </div>
+          </div>
+
+          <label>识别置信度</label>
+          <input id="confidence" type="number" step="0.01" min="0" max="1" value="0.15" />
+          <label>导出格式</label>
+          <select id="outputFormat">
+            <option value="mp4">MP4</option>
+            <option value="mov">MOV</option>
+          </select>
+          <button id="processBtn" onclick="processVideo()" disabled>执行识别并剪辑</button>
         </aside>
-        <section>
-          <h2>片段规划结果</h2>
-          <p class="status">MVP 当前支持 reviewed events -> clips。真实 YOLO 检测、标定和剪映草稿导出会接在同一工作台上。</p>
-          <pre id="output">等待规划...</pre>
+
+        <section class="workspace">
+          <div>
+            <h2>视频预览与导出</h2>
+            <p class="status">流程：选择文件 -> 上传预览 -> 点击篮筐中心 -> 执行 YOLO 识别 -> FFmpeg 生成集锦。</p>
+          </div>
+          <div class="video-grid">
+            <div>
+              <h3>原始视频</h3>
+              <video id="sourcePreview" controls onclick="pickRimCenter(event)"></video>
+            </div>
+            <div>
+              <h3>导出预览</h3>
+              <video id="exportPreview" controls></video>
+            </div>
+          </div>
+          <div>
+            <h3>执行结果</h3>
+            <pre id="output">等待上传视频...</pre>
+          </div>
         </section>
       </main>
     </div>
     <script>
+      let currentVideoId = null;
+
+      function setOutput(value, isError = false) {
+        const output = document.getElementById("output");
+        output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        output.className = isError ? "error" : "";
+      }
+
       async function refreshHealth() {
         const response = await fetch("/api/health");
         const data = await response.json();
         document.getElementById("health").textContent = data.status === "ok" ? "后端已连接" : "后端异常";
       }
-      async function planClips() {
+
+      async function uploadVideo() {
+        const fileInput = document.getElementById("videoFile");
+        const file = fileInput.files[0];
+        if (!file) {
+          setOutput("请先选择一个视频文件。", true);
+          return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        document.getElementById("uploadStatus").textContent = "上传中...";
+        try {
+          const response = await fetch("/api/upload-video", { method: "POST", body: formData });
+          const data = await response.json();
+          if (!response.ok) {
+            setOutput(data.detail || "上传失败", true);
+            document.getElementById("uploadStatus").textContent = "上传失败";
+            return;
+          }
+          currentVideoId = data.video_id;
+          document.getElementById("sourcePreview").src = data.preview_url;
+          document.getElementById("processBtn").disabled = false;
+          document.getElementById("uploadStatus").textContent = `已上传：${data.filename}`;
+          setOutput(data);
+        } catch (error) {
+          setOutput(`上传失败：${error}`, true);
+          document.getElementById("uploadStatus").textContent = "上传失败";
+        }
+      }
+
+      function pickRimCenter(event) {
+        const video = event.currentTarget;
+        if (!video.videoWidth || !video.videoHeight) {
+          return;
+        }
+        const rect = video.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (video.videoWidth / rect.width);
+        const y = (event.clientY - rect.top) * (video.videoHeight / rect.height);
+        document.getElementById("rimX").value = Math.round(x);
+        document.getElementById("rimY").value = Math.round(y);
+      }
+
+      async function processVideo() {
+        if (!currentVideoId) {
+          setOutput("请先上传视频。", true);
+          return;
+        }
         const payload = {
-          video_path: document.getElementById("videoPath").value,
+          video_id: currentVideoId,
           pre_seconds: Number(document.getElementById("preSeconds").value),
           post_seconds: Number(document.getElementById("postSeconds").value),
-          events: JSON.parse(document.getElementById("events").value)
+          output_format: document.getElementById("outputFormat").value,
+          confidence: Number(document.getElementById("confidence").value),
+          rim: {
+            center_x: Number(document.getElementById("rimX").value),
+            center_y: Number(document.getElementById("rimY").value),
+            half_width: Number(document.getElementById("rimHalfWidth").value),
+            half_height: Number(document.getElementById("rimHalfHeight").value)
+          }
         };
-        const response = await fetch("/api/plan-clips", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+        const button = document.getElementById("processBtn");
+        button.disabled = true;
+        button.textContent = "识别与剪辑中...";
+        setOutput("正在识别进球并导出视频，这可能需要几分钟。");
+        try {
+          const response = await fetch("/api/process-video", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            setOutput(data.detail || "处理失败", true);
+            return;
+          }
+          document.getElementById("exportPreview").src = data.preview_url;
+          setOutput(data);
+        } catch (error) {
+          setOutput(`处理失败：${error}`, true);
+        } finally {
+          button.disabled = false;
+          button.textContent = "执行识别并剪辑";
+        }
       }
+
       refreshHealth().catch(() => {
         document.getElementById("health").textContent = "后端未连接";
       });

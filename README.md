@@ -43,21 +43,21 @@ Open `http://127.0.0.1:8000`.
 ## Current Workflow
 
 1. Start the app.
-2. Paste reviewed made-shot events as JSON.
-3. Adjust pre-roll and post-roll seconds.
-4. Click `规划剪辑片段`.
-5. Use the returned clip intervals for FFmpeg export or capcut-mate draft generation.
+2. Click `选择篮球录像` and upload a video file.
+3. Use the source preview to pause on a clear hoop frame.
+4. Click the hoop center in the preview to fill rim center coordinates.
+5. Adjust rim half width/height, pre-roll, post-roll, confidence, and export format.
+6. Click `执行识别并剪辑`.
+7. Review the exported preview video in the browser.
 
-Example event:
+Full video recognition requires optional vision dependencies and FFmpeg:
 
-```json
-{
-  "id": "make-1",
-  "video_path": "game.mp4",
-  "t_make": 10.0,
-  "confidence": 0.8
-}
+```powershell
+python -m pip install -e .[vision]
+winget install Gyan.FFmpeg
 ```
+
+The detector uses YOLO sports-ball detection near the calibrated rim and the rim-plane crossing logic from the project design.
 
 ## capcut-mate Integration
 
@@ -65,6 +65,6 @@ This project does not vendor all of capcut-mate. Instead, it prepares clip files
 
 ## MVP Limitations
 
-- The GUI currently plans clips from reviewed event JSON.
-- Full YOLO frame scanning is intentionally isolated for a later adapter.
+- Hoop calibration is manual: click the hoop center and adjust half width/height.
+- Static or mostly static camera footage works best.
 - Automatic Jianying export depends on a working capcut-mate Windows environment.
