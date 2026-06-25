@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from hobby_basketball.clips import build_clip_intervals, merge_intervals
-from hobby_basketball.detector import scan_video_for_made_shots
+from hobby_basketball.detector import DEFAULT_MODEL_NAME, DEFAULT_SAMPLE_FPS, scan_video_for_made_shots
 from hobby_basketball.ffmpeg_export import export_reel
 from hobby_basketball.models import ClipInterval, MadeShotEvent
 from hobby_basketball.trajectory import RimCalibration
@@ -39,10 +39,10 @@ class ProcessVideoRequest(BaseModel):
     pre_seconds: float = Field(default=5.0, ge=0)
     post_seconds: float = Field(default=1.5, gt=0)
     output_format: str = "mp4"
-    sample_fps: float = Field(default=15.0, gt=0)
+    sample_fps: float = Field(default=DEFAULT_SAMPLE_FPS, gt=0)
     confidence: float = Field(default=0.15, ge=0, le=1)
     device: str = "cpu"
-    model_name: str = "yolo11m.pt"
+    model_name: str = DEFAULT_MODEL_NAME
 
 
 class ProcessVideoResponse(BaseModel):

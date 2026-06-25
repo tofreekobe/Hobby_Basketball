@@ -41,6 +41,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'type="file"' in html
     assert 'id="device"' in html
     assert 'value="cpu" selected' in html
+    assert 'id="sampleFps"' in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
 
@@ -104,3 +105,5 @@ def test_process_video_runs_detection_and_export(monkeypatch):
     assert data["clips"][0]["start"] == 5.0
     assert data["preview_url"].endswith(".mp4")
     assert detector_kwargs["device"] == "cpu"
+    assert detector_kwargs["sample_fps"] == 4.0
+    assert detector_kwargs["model_name"] == "yolo11n.pt"

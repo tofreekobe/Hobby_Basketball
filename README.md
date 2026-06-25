@@ -11,6 +11,8 @@ This repository contains the first runnable MVP for the basketball AI clipping w
 - expose a local FastAPI app with a lightweight single-page GUI
 
 The default clip window is 5 seconds before the made shot and 1.5 seconds after.
+The default detector profile is CPU-safe: `yolo11n.pt` at 4 sampled frames per
+second.
 
 ## Setup
 
@@ -34,8 +36,12 @@ GPU's compute capability.
 
 If you select `auto` or `cuda` and YOLO hits `CUDA error: no kernel image is
 available for execution on the device`, the detector retries that prediction on
-CPU. Use CUDA only after installing a PyTorch build that explicitly supports
-your GPU architecture.
+CPU and keeps using CPU for the rest of the scan. Use CUDA only after installing
+a PyTorch build that explicitly supports your GPU architecture.
+
+The `sample_fps` option controls the speed/accuracy tradeoff. Higher values scan
+more frames and may catch more subtle ball movement, but CPU processing can slow
+down sharply. Start with 4 FPS and raise it only when the result misses shots.
 
 ## Run Tests
 

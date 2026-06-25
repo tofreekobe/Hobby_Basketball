@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from hobby_basketball.models import MadeShotEvent
 from hobby_basketball.trajectory import BallSample, RimCalibration, detect_made_shots
 
 
+DEFAULT_SAMPLE_FPS = 4.0
+DEFAULT_MODEL_NAME = "yolo11n.pt"
 SPORTS_BALL_CLASS_ID = 32
+YOLO_IMAGE_SIZE = 416
 CUDA_KERNEL_ERROR_MARKERS = (
     "CUDA error: no kernel image is available",
     "no kernel image is available for execution on the device",
@@ -17,9 +21,9 @@ def scan_video_for_made_shots(
     video_path: Path | str,
     rim: RimCalibration,
     *,
-    sample_fps: float = 15.0,
+    sample_fps: float = DEFAULT_SAMPLE_FPS,
     confidence: float = 0.15,
-    model_name: str = "yolo11m.pt",
+    model_name: str = DEFAULT_MODEL_NAME,
     device: str = "cpu",
 ) -> list[MadeShotEvent]:
     try:
@@ -42,25 +46,32 @@ def scan_video_for_made_shots(
     x0, y0, x1, y1 = _rim_roi(rim, width, height)
 
     model = YOLO(model_name)
-    device_arg = None if device == "auto" else device
+    device_state = _PredictionDeviceState(device)
     samples: list[BallSample] = []
     frame_index = 0
 
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frame_index += 1
-        if frame_index % stride != 0:
-            continue
-        t = frame_index / native_fps
-        crop = frame[y0:y1, x0:x1]
-        results = _predict_with_cuda_fallback(model, crop, device_arg=device_arg, confidence=confidence)
-        sample = _best_ball_sample(results, x0, y0, rim, t)
-        if sample is not None:
-            samples.append(sample)
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frame_index += 1
+            if frame_index % stride != 0:
+                continue
+            t = frame_index / native_fps
+            crop = frame[y0:y1, x0:x1]
+            results = _predict_with_device_fallback(
+                model,
+                crop,
+                device_state=device_state,
+                confidence=confidence,
+            )
+            sample = _best_ball_sample(results, x0, y0, rim, t)
+            if sample is not None:
+                samples.append(sample)
+    finally:
+        cap.release()
 
-    cap.release()
     return detect_made_shots(samples, rim, video_path=str(video_path))
 
 
@@ -70,26 +81,86 @@ def _is_cuda_kernel_error(exc: BaseException) -> bool:
 
 
 def _predict_with_cuda_fallback(model, crop, *, device_arg, confidence: float):
+    device_state = _StaticPredictionDeviceState(device_arg)
+    return _predict_with_device_fallback(model, crop, device_state=device_state, confidence=confidence)
+
+
+def _predict_with_device_fallback(model, crop, *, device_state, confidence: float):
     try:
         return model.predict(
             crop,
             verbose=False,
             conf=confidence,
             classes=[SPORTS_BALL_CLASS_ID],
-            imgsz=640,
-            device=device_arg,
+            imgsz=YOLO_IMAGE_SIZE,
+            device=device_state.device_arg,
         )
     except Exception as exc:
-        if _device_can_fallback_to_cpu(device_arg) and _is_cuda_kernel_error(exc):
+        if device_state.can_fallback_to_cpu() and _is_cuda_kernel_error(exc):
+            device_state.fallback_to_cpu()
             return model.predict(
                 crop,
                 verbose=False,
                 conf=confidence,
                 classes=[SPORTS_BALL_CLASS_ID],
-                imgsz=640,
+                imgsz=YOLO_IMAGE_SIZE,
                 device="cpu",
             )
         raise
+
+
+@dataclass
+class _PredictionDeviceState:
+    requested_device: str
+    torch_module: object | None = None
+
+    def __post_init__(self) -> None:
+        self.device_arg = _resolve_device_arg(self.requested_device, torch_module=self.torch_module)
+
+    def can_fallback_to_cpu(self) -> bool:
+        return _device_can_fallback_to_cpu(self.device_arg)
+
+    def fallback_to_cpu(self) -> None:
+        self.device_arg = "cpu"
+
+
+@dataclass
+class _StaticPredictionDeviceState:
+    device_arg: object
+
+    def can_fallback_to_cpu(self) -> bool:
+        return _device_can_fallback_to_cpu(self.device_arg)
+
+    def fallback_to_cpu(self) -> None:
+        self.device_arg = "cpu"
+
+
+def _resolve_device_arg(device: str, *, torch_module=None):
+    normalized = (device or "cpu").strip().lower()
+    device_arg = None if normalized == "auto" else normalized
+    if _device_can_fallback_to_cpu(device_arg) and _torch_cuda_arch_is_unsupported(torch_module):
+        return "cpu"
+    return device_arg
+
+
+def _torch_cuda_arch_is_unsupported(torch_module=None) -> bool:
+    try:
+        if torch_module is None:
+            import torch as torch_module
+
+        cuda = torch_module.cuda
+        if not cuda.is_available():
+            return False
+
+        supported_arches = set(cuda.get_arch_list() or [])
+        if not supported_arches:
+            return False
+
+        major, minor = cuda.get_device_capability(0)
+        current_arch = f"sm_{major}{minor}"
+        return current_arch not in supported_arches
+    except Exception:
+        return False
 
 
 def _device_can_fallback_to_cpu(device_arg) -> bool:
