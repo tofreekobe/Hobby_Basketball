@@ -41,7 +41,7 @@ class ProcessVideoRequest(BaseModel):
     output_format: str = "mp4"
     sample_fps: float = Field(default=15.0, gt=0)
     confidence: float = Field(default=0.15, ge=0, le=1)
-    device: str = "auto"
+    device: str = "cpu"
     model_name: str = "yolo11m.pt"
 
 

@@ -7,6 +7,10 @@ from hobby_basketball.trajectory import BallSample, RimCalibration, detect_made_
 
 
 SPORTS_BALL_CLASS_ID = 32
+CUDA_KERNEL_ERROR_MARKERS = (
+    "CUDA error: no kernel image is available",
+    "no kernel image is available for execution on the device",
+)
 
 
 def scan_video_for_made_shots(
@@ -16,7 +20,7 @@ def scan_video_for_made_shots(
     sample_fps: float = 15.0,
     confidence: float = 0.15,
     model_name: str = "yolo11m.pt",
-    device: str = "auto",
+    device: str = "cpu",
 ) -> list[MadeShotEvent]:
     try:
         import cv2
@@ -51,7 +55,23 @@ def scan_video_for_made_shots(
             continue
         t = frame_index / native_fps
         crop = frame[y0:y1, x0:x1]
-        results = model.predict(
+        results = _predict_with_cuda_fallback(model, crop, device_arg=device_arg, confidence=confidence)
+        sample = _best_ball_sample(results, x0, y0, rim, t)
+        if sample is not None:
+            samples.append(sample)
+
+    cap.release()
+    return detect_made_shots(samples, rim, video_path=str(video_path))
+
+
+def _is_cuda_kernel_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return any(marker in message for marker in CUDA_KERNEL_ERROR_MARKERS)
+
+
+def _predict_with_cuda_fallback(model, crop, *, device_arg, confidence: float):
+    try:
+        return model.predict(
             crop,
             verbose=False,
             conf=confidence,
@@ -59,12 +79,28 @@ def scan_video_for_made_shots(
             imgsz=640,
             device=device_arg,
         )
-        sample = _best_ball_sample(results, x0, y0, rim, t)
-        if sample is not None:
-            samples.append(sample)
+    except Exception as exc:
+        if _device_can_fallback_to_cpu(device_arg) and _is_cuda_kernel_error(exc):
+            return model.predict(
+                crop,
+                verbose=False,
+                conf=confidence,
+                classes=[SPORTS_BALL_CLASS_ID],
+                imgsz=640,
+                device="cpu",
+            )
+        raise
 
-    cap.release()
-    return detect_made_shots(samples, rim, video_path=str(video_path))
+
+def _device_can_fallback_to_cpu(device_arg) -> bool:
+    if device_arg is None:
+        return True
+    if isinstance(device_arg, int):
+        return device_arg >= 0
+    if isinstance(device_arg, str):
+        normalized = device_arg.strip().lower()
+        return normalized in {"auto", "cuda", "cuda:0", "0"}
+    return False
 
 
 def _rim_roi(rim: RimCalibration, width: int, height: int) -> tuple[int, int, int, int]:

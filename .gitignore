@@ -6,6 +6,7 @@ venv/
 dist/
 build/
 *.egg-info/
+*.pt
 outputs/
 workspace/
 temp/

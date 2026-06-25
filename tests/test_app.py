@@ -39,6 +39,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert response.status_code == 200
     html = response.text
     assert 'type="file"' in html
+    assert 'id="device"' in html
+    assert 'value="cpu" selected' in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
 
@@ -65,7 +67,10 @@ def test_process_video_runs_detection_and_export(monkeypatch):
         files={"file": ("game.mp4", b"fake-video-bytes", "video/mp4")},
     ).json()
 
+    detector_kwargs = {}
+
     def fake_detector(video_path, rim, **kwargs):
+        detector_kwargs.update(kwargs)
         return [
             MadeShotEvent(
                 id="make-1",
@@ -98,3 +103,4 @@ def test_process_video_runs_detection_and_export(monkeypatch):
     assert data["events"][0]["id"] == "make-1"
     assert data["clips"][0]["start"] == 5.0
     assert data["preview_url"].endswith(".mp4")
+    assert detector_kwargs["device"] == "cpu"

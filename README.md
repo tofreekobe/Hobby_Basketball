@@ -26,6 +26,17 @@ Optional vision dependencies for future YOLO/OpenCV scanning:
 .\.venv\Scripts\python -m pip install -e .[vision]
 ```
 
+### Inference Device
+
+The GUI and API default to `cpu` for compatibility. This avoids CUDA runtime
+errors on newer GPUs when the installed PyTorch wheel does not support the
+GPU's compute capability.
+
+If you select `auto` or `cuda` and YOLO hits `CUDA error: no kernel image is
+available for execution on the device`, the detector retries that prediction on
+CPU. Use CUDA only after installing a PyTorch build that explicitly supports
+your GPU architecture.
+
 ## Run Tests
 
 ```powershell
