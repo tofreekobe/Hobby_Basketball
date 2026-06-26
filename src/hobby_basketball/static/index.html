@@ -592,14 +592,20 @@
           setOutput("请先输入人工标注的进球时间。", true);
           return;
         }
-        const predictedTimes = selectedEvents().map((event) => Number(event.t_make));
-        const response = await fetch("/api/evaluate-events", {
+        const events = selectedEvents();
+        if (!events.length) {
+          setOutput("请至少保留一个候选事件再评估。", true);
+          return;
+        }
+        const response = await fetch("/api/evaluate-candidates", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
-            predicted_times: predictedTimes,
+            events,
             truth_times: truthTimes,
-            tolerance_sec: 1.0
+            tolerance_sec: 1.0,
+            target_precision: 0.95,
+            target_recall: 0.95
           })
         });
         const data = await response.json();

@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field
 
 from hobby_basketball.clips import build_clip_intervals, merge_intervals
 from hobby_basketball.detector import DEFAULT_MODEL_NAME, DEFAULT_SAMPLE_FPS, scan_video_for_made_shots
-from hobby_basketball.evaluation import EventEvaluationReport, evaluate_event_times
+from hobby_basketball.evaluation import (
+    ConfidenceThresholdReport,
+    EventEvaluationReport,
+    evaluate_confidence_thresholds,
+    evaluate_event_times,
+)
 from hobby_basketball.ffmpeg_export import export_reel
 from hobby_basketball.models import ClipInterval, MadeShotEvent
 from hobby_basketball.trajectory import RimCalibration
@@ -72,6 +77,14 @@ class EvaluateEventsRequest(BaseModel):
     tolerance_sec: float = Field(default=1.0, gt=0)
 
 
+class EvaluateCandidatesRequest(BaseModel):
+    events: list[MadeShotEvent]
+    truth_times: list[float]
+    tolerance_sec: float = Field(default=1.0, gt=0)
+    target_precision: float = Field(default=0.95, ge=0, le=1)
+    target_recall: float = Field(default=0.95, ge=0, le=1)
+
+
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
 VIDEO_REGISTRY: dict[str, Path] = {}
 
@@ -99,6 +112,17 @@ def evaluate_events(request: EvaluateEventsRequest) -> EventEvaluationReport:
         request.predicted_times,
         request.truth_times,
         tolerance_sec=request.tolerance_sec,
+    )
+
+
+@app.post("/api/evaluate-candidates", response_model=ConfidenceThresholdReport)
+def evaluate_candidates(request: EvaluateCandidatesRequest) -> ConfidenceThresholdReport:
+    return evaluate_confidence_thresholds(
+        request.events,
+        request.truth_times,
+        tolerance_sec=request.tolerance_sec,
+        target_precision=request.target_precision,
+        target_recall=request.target_recall,
     )
 
 

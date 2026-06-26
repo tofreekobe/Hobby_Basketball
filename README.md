@@ -97,6 +97,11 @@ print(report.precision, report.recall, report.f1)
 
 Targeting 95%+ means validating both precision and recall against a representative labeled set, not a single clip.
 
+Use `/api/evaluate-candidates` or the GUI evaluation button after entering manual
+truth times to sweep candidate confidence thresholds. The report returns the
+recommended threshold, whether the 95% precision and 95% recall targets were
+met, and the full threshold table for tuning.
+
 ## capcut-mate Integration
 
 This project does not vendor all of capcut-mate. Instead, it prepares clip files and capcut-mate compatible `video_infos` payloads. Point `CapCutMateClient` at a running capcut-mate service to create drafts and add generated clips.

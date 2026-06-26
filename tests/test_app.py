@@ -51,6 +51,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'id="truthTimes"' in html
     assert "seekCandidate" in html
     assert "markCurrentTruthTime" in html
+    assert "/api/evaluate-candidates" in html
+    assert "target_precision" in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
 
@@ -215,3 +217,29 @@ def test_evaluate_events_endpoint_returns_precision_recall_f1():
     assert data["precision"] == 0.666667
     assert data["recall"] == 1.0
     assert data["f1"] == 0.8
+
+
+def test_evaluate_candidates_endpoint_recommends_confidence_threshold():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/evaluate-candidates",
+        json={
+            "events": [
+                {"id": "make-1", "video_path": "game.mp4", "t_make": 10.0, "confidence": 0.92},
+                {"id": "make-2", "video_path": "game.mp4", "t_make": 20.0, "confidence": 0.84},
+                {"id": "false-1", "video_path": "game.mp4", "t_make": 45.0, "confidence": 0.30},
+            ],
+            "truth_times": [10.2, 20.1],
+            "tolerance_sec": 1.0,
+            "target_precision": 0.95,
+            "target_recall": 0.95,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["target_met"] is True
+    assert data["recommended_threshold"] == 0.84
+    assert data["recommended"]["precision"] == 1.0
+    assert data["recommended"]["recall"] == 1.0
