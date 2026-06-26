@@ -65,9 +65,10 @@ Open `http://127.0.0.1:8000`.
 4. Drag a rectangle around the hoop/net in the preview, or click the hoop center and adjust the box fields manually.
 5. Adjust rim box size, pre-roll, post-roll, confidence, sample FPS, and export format.
 6. Click `识别候选` to generate reviewable made-shot candidates.
-7. Uncheck false positives in `候选进球复核`.
-8. Click `导出已选候选` to render only the kept clips, or use `执行识别并剪辑` for the legacy one-click path.
-9. Optional: enter labeled made-shot times and click `评估候选准确率` to calculate precision, recall, and F1.
+7. Use each candidate's `跳转` action to inspect the source video around that moment.
+8. Uncheck false positives in `候选进球复核`.
+9. Click `导出已选候选` to render only the kept clips, or use `执行识别并剪辑` for the legacy one-click path.
+10. Optional: seek the source video to each true make, click `添加当前时间为标注`, then click `评估候选准确率` to calculate precision, recall, and F1.
 
 Full video recognition requires optional vision dependencies and FFmpeg:
 

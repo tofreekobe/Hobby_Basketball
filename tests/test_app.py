@@ -48,6 +48,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'id="exportSelectedBtn"' in html
     assert 'id="candidateList"' in html
     assert 'id="truthTimes"' in html
+    assert "seekCandidate" in html
+    assert "markCurrentTruthTime" in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
 

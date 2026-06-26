@@ -133,7 +133,7 @@
       }
       .candidate-item {
         display: grid;
-        grid-template-columns: auto 90px 90px 1fr;
+        grid-template-columns: auto 72px 72px 1fr 68px;
         gap: 10px;
         align-items: center;
         border: 1px solid #d8dee8;
@@ -218,6 +218,7 @@
           <button id="exportSelectedBtn" class="secondary" onclick="exportSelectedCandidates()" disabled>导出已选候选</button>
           <label>人工标注进球时间</label>
           <textarea id="truthTimes" rows="3" placeholder="例如：18.4, 44.7, 51.2"></textarea>
+          <button id="markTruthBtn" class="secondary" onclick="markCurrentTruthTime()" disabled>添加当前时间为标注</button>
           <button id="evaluateBtn" class="secondary" onclick="evaluateCandidates()" disabled>评估候选准确率</button>
           <button id="processBtn" onclick="processVideo()" disabled>执行识别并剪辑</button>
         </aside>
@@ -304,6 +305,7 @@
           document.getElementById("detectBtn").disabled = false;
           document.getElementById("exportSelectedBtn").disabled = true;
           document.getElementById("evaluateBtn").disabled = true;
+          document.getElementById("markTruthBtn").disabled = false;
           renderCandidateList([]);
           document.getElementById("uploadStatus").textContent = `已上传：${data.filename}`;
           setOutput(data);
@@ -494,9 +496,47 @@
           confidence.textContent = `${Math.round(Number(event.confidence) * 100)}%`;
           const notes = document.createElement("span");
           notes.textContent = event.notes || event.id;
-          item.append(checkbox, time, confidence, notes);
+          const seek = document.createElement("button");
+          seek.type = "button";
+          seek.className = "secondary";
+          seek.textContent = "跳转";
+          seek.onclick = (clickEvent) => {
+            clickEvent.preventDefault();
+            seekCandidate(event.t_make);
+          };
+          item.append(checkbox, time, confidence, notes, seek);
           list.appendChild(item);
         }
+      }
+
+      function seekCandidate(timeSeconds) {
+        const video = document.getElementById("sourcePreview");
+        if (!video.src) {
+          return;
+        }
+        video.currentTime = Math.max(0, Number(timeSeconds) - 1.0);
+        video.pause();
+      }
+
+      function markCurrentTruthTime() {
+        const video = document.getElementById("sourcePreview");
+        if (!video.src || !Number.isFinite(video.currentTime)) {
+          setOutput("请先在原始视频里定位一个进球时间。", true);
+          return;
+        }
+        addTruthTime(video.currentTime);
+      }
+
+      function addTruthTime(timeSeconds) {
+        const textarea = document.getElementById("truthTimes");
+        const existing = parseTruthTimes();
+        const value = Number(timeSeconds);
+        if (!Number.isFinite(value) || value < 0) {
+          return;
+        }
+        existing.push(Number(value.toFixed(2)));
+        const unique = [...new Set(existing)].sort((a, b) => a - b);
+        textarea.value = unique.map((item) => item.toFixed(2)).join(", ");
       }
 
       function selectedEvents() {
