@@ -42,6 +42,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'id="device"' in html
     assert 'value="cpu" selected' in html
     assert 'id="sampleFps"' in html
+    assert 'id="sampleFps" type="number" step="0.5" min="1" max="15" value="12.0"' in html
     assert 'id="rimOverlay"' in html
     assert "startRimDrag" in html
     assert 'id="detectBtn"' in html
@@ -113,8 +114,8 @@ def test_process_video_runs_detection_and_export(monkeypatch):
     assert data["clips"][0]["start"] == 5.0
     assert data["preview_url"].endswith(".mp4")
     assert detector_kwargs["device"] == "cpu"
-    assert detector_kwargs["sample_fps"] == 4.0
-    assert detector_kwargs["model_name"] == "yolo11n.pt"
+    assert detector_kwargs["sample_fps"] == 12.0
+    assert detector_kwargs["model_name"] == "none"
 
 
 def test_detect_video_returns_reviewable_candidates_without_export(monkeypatch):

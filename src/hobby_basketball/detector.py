@@ -7,10 +7,11 @@ from hobby_basketball.models import MadeShotEvent
 from hobby_basketball.trajectory import BallSample, RimCalibration, detect_made_shots
 
 
-DEFAULT_SAMPLE_FPS = 4.0
-DEFAULT_MODEL_NAME = "yolo11n.pt"
+DEFAULT_SAMPLE_FPS = 12.0
+DEFAULT_MODEL_NAME = "none"
 SPORTS_BALL_CLASS_ID = 32
 YOLO_IMAGE_SIZE = 416
+YOLO_DISABLED_MODEL_NAMES = {"", "none", "off", "false", "0", "color", "fast"}
 CUDA_KERNEL_ERROR_MARKERS = (
     "CUDA error: no kernel image is available",
     "no kernel image is available for execution on the device",
@@ -28,11 +29,20 @@ def scan_video_for_made_shots(
 ) -> list[MadeShotEvent]:
     try:
         import cv2
-        from ultralytics import YOLO
     except Exception as exc:  # pragma: no cover - exercised when optional deps missing
         raise RuntimeError(
-            "视频识别需要 OpenCV 和 Ultralytics。请先安装：python -m pip install -e .[vision]"
+            "视频识别需要 OpenCV。请先安装：python -m pip install -e .[vision]"
         ) from exc
+
+    model = None
+    if _yolo_enabled(model_name):
+        try:
+            from ultralytics import YOLO
+        except Exception as exc:  # pragma: no cover - exercised when optional deps missing
+            raise RuntimeError(
+                "YOLO detection requires Ultralytics. Install python -m pip install -e .[vision], or set model_name to none for fast color/motion detection."
+            ) from exc
+        model = YOLO(model_name)
 
     video_path = Path(video_path)
     cap = cv2.VideoCapture(str(video_path))
@@ -45,7 +55,6 @@ def scan_video_for_made_shots(
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     x0, y0, x1, y1 = _rim_roi(rim, width, height)
 
-    model = YOLO(model_name)
     device_state = _PredictionDeviceState(device)
     samples: list[BallSample] = []
     frame_index = 0
@@ -61,13 +70,15 @@ def scan_video_for_made_shots(
                 continue
             t = frame_index / native_fps
             crop = frame[y0:y1, x0:x1]
-            results = _predict_with_device_fallback(
-                model,
-                crop,
-                device_state=device_state,
-                confidence=confidence,
-            )
-            yolo_sample = _best_ball_sample(results, x0, y0, rim, t)
+            yolo_sample = None
+            if model is not None:
+                results = _predict_with_device_fallback(
+                    model,
+                    crop,
+                    device_state=device_state,
+                    confidence=confidence,
+                )
+                yolo_sample = _best_ball_sample(results, x0, y0, rim, t)
             color_sample = _best_color_ball_sample(crop, x0, y0, rim, t, previous_crop=previous_crop)
             sample = _best_observed_ball_sample([yolo_sample, color_sample], rim)
             if sample is not None:
@@ -77,6 +88,10 @@ def scan_video_for_made_shots(
         cap.release()
 
     return detect_made_shots(samples, rim, video_path=str(video_path))
+
+
+def _yolo_enabled(model_name: str) -> bool:
+    return (model_name or "").strip().lower() not in YOLO_DISABLED_MODEL_NAMES
 
 
 def _is_cuda_kernel_error(exc: BaseException) -> bool:

@@ -5,14 +5,15 @@ Basketball made-shot highlight reel and CapCut/Jianying draft helper.
 This repository contains the first runnable MVP for the basketball AI clipping workflow:
 
 - plan made-shot clip windows with configurable pre-roll and post-roll
-- detect made shots from fused YOLO, orange-ball color, and motion samples
+- detect made shots from fast orange-ball color/motion samples, with optional YOLO sports-ball enhancement
 - build FFmpeg commands for MP4 reels
 - generate capcut-mate compatible draft payloads
 - expose a local FastAPI app with a lightweight single-page GUI
 
 The default clip window is 5 seconds before the made shot and 1.5 seconds after.
-The default detector profile is CPU-safe: `yolo11n.pt` at 4 sampled frames per
-second.
+The default detector profile is CPU-safe and fast: `model_name=none` at 12
+sampled frames per second. Set `model_name=yolo11n.pt` only when you want the
+optional YOLO sports-ball enhancer.
 
 ## Setup
 
@@ -39,9 +40,9 @@ available for execution on the device`, the detector retries that prediction on
 CPU and keeps using CPU for the rest of the scan. Use CUDA only after installing
 a PyTorch build that explicitly supports your GPU architecture.
 
-The `sample_fps` option controls the speed/accuracy tradeoff. Higher values scan
-more frames and may catch more subtle ball movement, but CPU processing can slow
-down sharply. Start with 4 FPS and raise it only when the result misses shots.
+The `sample_fps` option controls the speed/accuracy tradeoff. The default 12 FPS
+works well for the fast color/motion path; lower it only for very long videos or
+slow machines.
 
 ## Run Tests
 
@@ -77,7 +78,7 @@ python -m pip install -e .[vision]
 winget install Gyan.FFmpeg
 ```
 
-The detector uses YOLO sports-ball detection near the calibrated rim, orange-ball color/motion candidates, strict rim-plane crossing, and a rim-net entry score for distant footage where the ball is only visible while entering the net.
+The detector defaults to orange-ball color/motion candidates, strict rim-plane crossing, and a rim-net entry score for distant footage where the ball is only visible while entering the net. YOLO sports-ball detection near the calibrated rim is optional.
 
 ## Accuracy Evaluation
 

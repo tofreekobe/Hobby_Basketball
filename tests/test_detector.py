@@ -7,6 +7,7 @@ from hobby_basketball.detector import (
     _predict_with_cuda_fallback,
     _predict_with_device_fallback,
     _resolve_device_arg,
+    scan_video_for_made_shots,
 )
 from hobby_basketball.trajectory import RimCalibration
 
@@ -68,6 +69,46 @@ def test_color_ball_sample_prefers_moving_orange_blob_near_rim():
     assert 99 <= sample.x <= 111
     assert 86 <= sample.y <= 98
     assert sample.confidence >= 0.3
+
+
+def test_scan_video_can_detect_make_without_yolo(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    video_path = tmp_path / "synthetic_make.mp4"
+    writer = cv2.VideoWriter(
+        str(video_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        10.0,
+        (200, 160),
+    )
+    assert writer.isOpened()
+    ball_positions = {
+        2: (100, 48),
+        3: (100, 62),
+        4: (100, 82),
+        5: (100, 100),
+    }
+    for frame_index in range(10):
+        frame = np.zeros((160, 200, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (78, 68), (122, 75), (240, 240, 240), 1)
+        if frame_index in ball_positions:
+            cv2.circle(frame, ball_positions[frame_index], 7, (0, 95, 255), -1)
+        writer.write(frame)
+    writer.release()
+
+    rim = RimCalibration(center_x=100, center_y=70, half_width=20, half_height=10)
+
+    makes = scan_video_for_made_shots(
+        video_path,
+        rim,
+        sample_fps=10.0,
+        model_name="none",
+        device="cpu",
+    )
+
+    assert len(makes) == 1
+    assert 0.25 <= makes[0].t_make <= 0.55
 
 
 class FakeModel:

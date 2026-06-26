@@ -200,8 +200,8 @@
           <label>识别置信度</label>
           <input id="confidence" type="number" step="0.01" min="0" max="1" value="0.15" />
           <label>抽样 FPS</label>
-          <input id="sampleFps" type="number" step="0.5" min="1" max="15" value="4.0" />
-          <p class="hint">数值越高越细，但会明显变慢；CPU 建议先用 4 FPS。</p>
+          <input id="sampleFps" type="number" step="0.5" min="1" max="15" value="12.0" />
+          <p class="hint">快速颜色/运动模式默认 12 FPS；长视频或低配机器可适当降低。</p>
           <label>识别设备</label>
           <select id="device">
             <option value="cpu" selected>CPU（兼容优先）</option>

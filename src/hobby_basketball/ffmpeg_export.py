@@ -60,7 +60,7 @@ def export_reel(clips: list[ClipInterval], output_dir: Path, final_path: Path) -
 
     list_file = output_dir / "clips.txt"
     list_file.write_text(
-        "".join(f"file '{path.as_posix()}'\n" for path in clip_paths),
+        "".join(f"file '{path.name}'\n" for path in clip_paths),
         encoding="utf-8",
     )
     subprocess.run(build_concat_command(list_file, final_path), check=True)

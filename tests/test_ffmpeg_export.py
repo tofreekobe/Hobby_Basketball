@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from hobby_basketball.ffmpeg_export import build_clip_command, build_concat_command
+from hobby_basketball.ffmpeg_export import build_clip_command, build_concat_command, export_reel
 from hobby_basketball.models import ClipInterval
 
 
@@ -32,3 +32,21 @@ def test_build_concat_command_targets_final_mp4():
         "+faststart",
         "final.mp4",
     ]
+
+
+def test_export_reel_writes_concat_paths_relative_to_list_file(tmp_path, monkeypatch):
+    commands = []
+
+    def fake_run(command, check):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"video")
+
+    monkeypatch.setattr("hobby_basketball.ffmpeg_export.subprocess.run", fake_run)
+    clip = ClipInterval(video_path="game.mp4", start=5.0, end=11.5, event_ids=["make-1"])
+    output_dir = tmp_path / "rendered"
+    final_path = tmp_path / "final.mp4"
+
+    export_reel([clip], output_dir, final_path)
+
+    assert (output_dir / "clips.txt").read_text(encoding="utf-8") == "file 'clip_000.mp4'\n"
+    assert commands[-1][-1] == str(final_path)
