@@ -2,11 +2,13 @@ import pytest
 
 from hobby_basketball.detector import (
     _PredictionDeviceState,
+    _best_color_ball_sample,
     _is_cuda_kernel_error,
     _predict_with_cuda_fallback,
     _predict_with_device_fallback,
     _resolve_device_arg,
 )
+from hobby_basketball.trajectory import RimCalibration
 
 
 def test_cuda_kernel_error_is_detected():
@@ -48,6 +50,24 @@ def test_cuda_fallback_is_sticky_for_remaining_predictions():
 def test_unsupported_cuda_arch_resolves_to_cpu_before_prediction():
     assert _resolve_device_arg("cuda", torch_module=FakeUnsupportedTorch) == "cpu"
     assert _resolve_device_arg("auto", torch_module=FakeUnsupportedTorch) == "cpu"
+
+
+def test_color_ball_sample_prefers_moving_orange_blob_near_rim():
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    rim = RimCalibration(center_x=100, center_y=80, half_width=25, half_height=25)
+    previous = np.zeros((160, 220, 3), dtype=np.uint8)
+    current = previous.copy()
+    cv2.circle(previous, (100, 65), 8, (255, 255, 255), -1)
+    cv2.circle(current, (105, 92), 10, (0, 95, 255), -1)
+
+    sample = _best_color_ball_sample(current, 0, 0, rim, 2.0, previous_crop=previous)
+
+    assert sample is not None
+    assert 99 <= sample.x <= 111
+    assert 86 <= sample.y <= 98
+    assert sample.confidence >= 0.3
 
 
 class FakeModel:

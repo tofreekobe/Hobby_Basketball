@@ -76,6 +76,79 @@ def detect_made_shots(
             )
         )
 
+    makes.extend(
+        _detect_rim_net_entries(
+            ordered,
+            rim,
+            video_path=video_path,
+            start_index=len(makes),
+            min_spacing_sec=min_spacing_sec,
+            bounce_up_window_sec=bounce_up_window_sec,
+        )
+    )
+    return _dedupe_makes(makes, min_spacing_sec)
+
+
+def _detect_rim_net_entries(
+    samples: list[BallSample],
+    rim: RimCalibration,
+    *,
+    video_path: str,
+    start_index: int,
+    min_spacing_sec: float,
+    bounce_up_window_sec: float,
+    x_margin_frac: float = 0.7,
+    entry_top_frac: float = 0.45,
+    exit_bottom_frac: float = 1.7,
+    min_drop_frac: float = 0.55,
+    max_event_gap_sec: float = 1.5,
+) -> list[MadeShotEvent]:
+    x_lo = rim.center_x - rim.half_width * (1 + x_margin_frac)
+    x_hi = rim.center_x + rim.half_width * (1 + x_margin_frac)
+    y_entry_top = rim.center_y - rim.half_height * entry_top_frac
+    y_exit_bottom = rim.center_y + rim.half_height * exit_bottom_frac
+    min_drop_px = max(8.0, rim.half_height * min_drop_frac)
+
+    candidates = [
+        sample
+        for sample in samples
+        if x_lo <= sample.x <= x_hi and y_entry_top <= sample.y <= y_exit_bottom
+    ]
+    makes: list[MadeShotEvent] = []
+    for entry in candidates:
+        exit_sample: BallSample | None = None
+        for later in candidates:
+            if later.t <= entry.t:
+                continue
+            gap = later.t - entry.t
+            if gap > max_event_gap_sec:
+                break
+            if later.y - entry.y < min_drop_px:
+                continue
+            if later.y < rim.center_y:
+                continue
+            exit_sample = later
+            break
+        if exit_sample is None:
+            continue
+        if _bounced_back(candidates, exit_sample, y_entry_top, bounce_up_window_sec):
+            continue
+
+        drop_score = min(0.25, (exit_sample.y - entry.y) / max(rim.half_height * 4.0, 1.0))
+        conf_score = (entry.confidence + exit_sample.confidence) / 2.0
+        score = min(1.0, conf_score + drop_score)
+        makes.append(
+            MadeShotEvent(
+                id=f"make-{start_index + len(makes) + 1:04d}",
+                video_path=video_path,
+                t_make=round((entry.t + exit_sample.t) / 2.0, 6),
+                t_above=entry.t,
+                t_below=exit_sample.t,
+                confidence=round(score, 6),
+                notes="rim-net entry",
+            )
+        )
+
     return _dedupe_makes(makes, min_spacing_sec)
 
 

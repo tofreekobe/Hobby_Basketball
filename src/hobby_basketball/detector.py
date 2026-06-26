@@ -49,6 +49,7 @@ def scan_video_for_made_shots(
     device_state = _PredictionDeviceState(device)
     samples: list[BallSample] = []
     frame_index = 0
+    previous_crop = None
 
     try:
         while True:
@@ -66,9 +67,12 @@ def scan_video_for_made_shots(
                 device_state=device_state,
                 confidence=confidence,
             )
-            sample = _best_ball_sample(results, x0, y0, rim, t)
+            yolo_sample = _best_ball_sample(results, x0, y0, rim, t)
+            color_sample = _best_color_ball_sample(crop, x0, y0, rim, t, previous_crop=previous_crop)
+            sample = _best_observed_ball_sample([yolo_sample, color_sample], rim)
             if sample is not None:
                 samples.append(sample)
+            previous_crop = crop.copy()
     finally:
         cap.release()
 
@@ -196,3 +200,80 @@ def _best_ball_sample(results, x_offset: int, y_offset: int, rim: RimCalibration
     if best is None:
         return None
     return BallSample(t=t, x=best[1], y=best[2], confidence=best[3])
+
+
+def _best_color_ball_sample(
+    crop,
+    x_offset: int,
+    y_offset: int,
+    rim: RimCalibration,
+    t: float,
+    *,
+    previous_crop=None,
+) -> BallSample | None:
+    try:
+        import cv2
+        import numpy as np
+    except Exception:  # pragma: no cover - cv2 is already required by video scanning
+        return None
+
+    if crop is None or crop.size == 0:
+        return None
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    orange_mask = cv2.inRange(hsv, np.array([0, 60, 70]), np.array([28, 255, 255]))
+
+    if previous_crop is not None and previous_crop.shape == crop.shape:
+        diff = cv2.absdiff(crop, previous_crop)
+        gray_diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+        _, motion_mask = cv2.threshold(gray_diff, 18, 255, cv2.THRESH_BINARY)
+        motion_mask = cv2.dilate(motion_mask, np.ones((5, 5), dtype=np.uint8), iterations=1)
+        moving_orange = cv2.bitwise_and(orange_mask, motion_mask)
+        if cv2.countNonZero(moving_orange) >= 12:
+            orange_mask = moving_orange
+
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    orange_mask = cv2.morphologyEx(orange_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    orange_mask = cv2.morphologyEx(orange_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    contours, _ = cv2.findContours(orange_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    best: tuple[float, float, float] | None = None
+    max_area = max(300.0, crop.shape[0] * crop.shape[1] * 0.08)
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < 12.0 or area > max_area:
+            continue
+        x, y, w, h = cv2.boundingRect(contour)
+        if w < 4 or h < 4 or w > 120 or h > 120:
+            continue
+        aspect = w / max(h, 1)
+        if aspect < 0.35 or aspect > 2.5:
+            continue
+
+        perimeter = float(cv2.arcLength(contour, True))
+        circularity = 0.0 if perimeter <= 0 else min(1.0, 4.0 * 3.141592653589793 * area / (perimeter * perimeter))
+        cx = x_offset + x + w / 2.0
+        cy = y_offset + y + h / 2.0
+        dist = ((cx - rim.center_x) ** 2 + (cy - rim.center_y) ** 2) ** 0.5
+        proximity = max(0.0, 1.0 - dist / max(max(rim.half_width, rim.half_height) * 4.0, 1.0))
+        area_score = min(1.0, area / 900.0)
+        score = 0.18 + proximity * 0.36 + circularity * 0.24 + area_score * 0.22
+        if best is None or score > best[0]:
+            best = (score, cx, cy)
+
+    if best is None:
+        return None
+    return BallSample(t=t, x=best[1], y=best[2], confidence=round(min(0.85, best[0]), 6))
+
+
+def _best_observed_ball_sample(samples: list[BallSample | None], rim: RimCalibration) -> BallSample | None:
+    observed = [sample for sample in samples if sample is not None]
+    if not observed:
+        return None
+    return max(observed, key=lambda sample: _sample_observation_score(sample, rim))
+
+
+def _sample_observation_score(sample: BallSample, rim: RimCalibration) -> float:
+    dist = ((sample.x - rim.center_x) ** 2 + (sample.y - rim.center_y) ** 2) ** 0.5
+    proximity = max(0.0, 1.0 - dist / max(max(rim.half_width, rim.half_height) * 5.0, 1.0))
+    return sample.confidence * 0.7 + proximity * 0.3

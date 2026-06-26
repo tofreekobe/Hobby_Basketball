@@ -5,7 +5,7 @@ Basketball made-shot highlight reel and CapCut/Jianying draft helper.
 This repository contains the first runnable MVP for the basketball AI clipping workflow:
 
 - plan made-shot clip windows with configurable pre-roll and post-roll
-- detect made shots from ball trajectory samples
+- detect made shots from fused YOLO, orange-ball color, and motion samples
 - build FFmpeg commands for MP4 reels
 - generate capcut-mate compatible draft payloads
 - expose a local FastAPI app with a lightweight single-page GUI
@@ -62,8 +62,8 @@ Open `http://127.0.0.1:8000`.
 1. Start the app.
 2. Click `选择篮球录像` and upload a video file.
 3. Use the source preview to pause on a clear hoop frame.
-4. Click the hoop center in the preview to fill rim center coordinates.
-5. Adjust rim half width/height, pre-roll, post-roll, confidence, and export format.
+4. Drag a rectangle around the hoop/net in the preview, or click the hoop center and adjust the box fields manually.
+5. Adjust rim box size, pre-roll, post-roll, confidence, sample FPS, and export format.
 6. Click `执行识别并剪辑`.
 7. Review the exported preview video in the browser.
 
@@ -74,7 +74,24 @@ python -m pip install -e .[vision]
 winget install Gyan.FFmpeg
 ```
 
-The detector uses YOLO sports-ball detection near the calibrated rim and the rim-plane crossing logic from the project design.
+The detector uses YOLO sports-ball detection near the calibrated rim, orange-ball color/motion candidates, strict rim-plane crossing, and a rim-net entry score for distant footage where the ball is only visible while entering the net.
+
+## Accuracy Evaluation
+
+Accuracy claims require labeled made-shot times. Use `hobby_basketball.evaluation.evaluate_event_times` to compare predicted event timestamps with ground truth labels:
+
+```python
+from hobby_basketball.evaluation import evaluate_event_times
+
+report = evaluate_event_times(
+    predicted_times=[18.53, 44.66],
+    truth_times=[18.40, 44.70],
+    tolerance_sec=1.0,
+)
+print(report.precision, report.recall, report.f1)
+```
+
+Targeting 95%+ means validating both precision and recall against a representative labeled set, not a single clip.
 
 ## capcut-mate Integration
 
@@ -82,6 +99,7 @@ This project does not vendor all of capcut-mate. Instead, it prepares clip files
 
 ## MVP Limitations
 
-- Hoop calibration is manual: click the hoop center and adjust half width/height.
+- Hoop calibration is manual: drag a hoop/net box or edit center/size fields.
 - Static or mostly static camera footage works best.
+- 95%+ accuracy requires a representative labeled evaluation set and may require model fine-tuning for specific court/camera styles.
 - Automatic Jianying export depends on a working capcut-mate Windows environment.

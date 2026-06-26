@@ -42,6 +42,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'id="device"' in html
     assert 'value="cpu" selected' in html
     assert 'id="sampleFps"' in html
+    assert 'id="rimOverlay"' in html
+    assert "startRimDrag" in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
 

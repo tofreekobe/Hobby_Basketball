@@ -97,6 +97,17 @@
         background: #0b1120;
         border-radius: 8px;
       }
+      .video-wrap {
+        position: relative;
+      }
+      .rim-overlay {
+        display: none;
+        position: absolute;
+        border: 3px solid #ef4444;
+        background: rgba(239, 68, 68, 0.08);
+        pointer-events: none;
+        box-sizing: border-box;
+      }
       pre {
         background: #0b1120;
         color: #dbeafe;
@@ -195,7 +206,18 @@
           <div class="video-grid">
             <div>
               <h3>原始视频</h3>
-              <video id="sourcePreview" controls onclick="pickRimCenter(event)"></video>
+              <div class="video-wrap">
+                <video
+                  id="sourcePreview"
+                  controls
+                  onclick="pickRimCenter(event)"
+                  onmousedown="startRimDrag(event)"
+                  onmousemove="updateRimDrag(event)"
+                  onmouseup="finishRimDrag(event)"
+                  onmouseleave="finishRimDrag(event)"
+                ></video>
+                <div id="rimOverlay" class="rim-overlay"></div>
+              </div>
             </div>
             <div>
               <h3>导出预览</h3>
@@ -211,6 +233,8 @@
     </div>
     <script>
       let currentVideoId = null;
+      let rimDragStart = null;
+      let suppressNextRimClickUntil = 0;
 
       function setOutput(value, isError = false) {
         const output = document.getElementById("output");
@@ -258,11 +282,107 @@
         if (!video.videoWidth || !video.videoHeight) {
           return;
         }
-        const rect = video.getBoundingClientRect();
-        const x = (event.clientX - rect.left) * (video.videoWidth / rect.width);
-        const y = (event.clientY - rect.top) * (video.videoHeight / rect.height);
+        if (event.detail === 0) {
+          return;
+        }
+        if (Date.now() < suppressNextRimClickUntil) {
+          return;
+        }
+        const point = videoPoint(event);
+        if (!point) {
+          return;
+        }
+        const {x, y} = point.video;
         document.getElementById("rimX").value = Math.round(x);
         document.getElementById("rimY").value = Math.round(y);
+        drawRimOverlayFromInputs();
+      }
+
+      function startRimDrag(event) {
+        const point = videoPoint(event);
+        if (!point) {
+          return;
+        }
+        rimDragStart = point;
+        updateRimOverlay(point.client, point.client);
+      }
+
+      function updateRimDrag(event) {
+        if (!rimDragStart) {
+          return;
+        }
+        const point = videoPoint(event);
+        if (!point) {
+          return;
+        }
+        updateRimOverlay(rimDragStart.client, point.client);
+      }
+
+      function finishRimDrag(event) {
+        if (!rimDragStart) {
+          return;
+        }
+        const point = videoPoint(event);
+        if (!point) {
+          rimDragStart = null;
+          return;
+        }
+        const start = rimDragStart.video;
+        const end = point.video;
+        const halfWidth = Math.max(4, Math.abs(end.x - start.x) / 2);
+        const halfHeight = Math.max(4, Math.abs(end.y - start.y) / 2);
+        if (halfWidth > 6 && halfHeight > 6) {
+          document.getElementById("rimX").value = Math.round((start.x + end.x) / 2);
+          document.getElementById("rimY").value = Math.round((start.y + end.y) / 2);
+          document.getElementById("rimHalfWidth").value = Math.round(halfWidth);
+          document.getElementById("rimHalfHeight").value = Math.round(halfHeight);
+          updateRimOverlay(rimDragStart.client, point.client);
+          suppressNextRimClickUntil = Date.now() + 250;
+        }
+        rimDragStart = null;
+      }
+
+      function videoPoint(event) {
+        const video = document.getElementById("sourcePreview");
+        if (!video.videoWidth || !video.videoHeight) {
+          return null;
+        }
+        const rect = video.getBoundingClientRect();
+        const clientX = Math.min(Math.max(event.clientX, rect.left), rect.right);
+        const clientY = Math.min(Math.max(event.clientY, rect.top), rect.bottom);
+        return {
+          client: {x: clientX - rect.left, y: clientY - rect.top},
+          video: {
+            x: (clientX - rect.left) * (video.videoWidth / rect.width),
+            y: (clientY - rect.top) * (video.videoHeight / rect.height)
+          }
+        };
+      }
+
+      function updateRimOverlay(a, b) {
+        const overlay = document.getElementById("rimOverlay");
+        const left = Math.min(a.x, b.x);
+        const top = Math.min(a.y, b.y);
+        overlay.style.display = "block";
+        overlay.style.left = `${left}px`;
+        overlay.style.top = `${top}px`;
+        overlay.style.width = `${Math.abs(b.x - a.x)}px`;
+        overlay.style.height = `${Math.abs(b.y - a.y)}px`;
+      }
+
+      function drawRimOverlayFromInputs() {
+        const video = document.getElementById("sourcePreview");
+        if (!video.videoWidth || !video.videoHeight) {
+          return;
+        }
+        const rect = video.getBoundingClientRect();
+        const scaleX = rect.width / video.videoWidth;
+        const scaleY = rect.height / video.videoHeight;
+        const cx = Number(document.getElementById("rimX").value) * scaleX;
+        const cy = Number(document.getElementById("rimY").value) * scaleY;
+        const hw = Number(document.getElementById("rimHalfWidth").value) * scaleX;
+        const hh = Number(document.getElementById("rimHalfHeight").value) * scaleY;
+        updateRimOverlay({x: cx - hw, y: cy - hh}, {x: cx + hw, y: cy + hh});
       }
 
       async function processVideo() {
