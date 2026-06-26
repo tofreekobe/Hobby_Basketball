@@ -64,8 +64,10 @@ Open `http://127.0.0.1:8000`.
 3. Use the source preview to pause on a clear hoop frame.
 4. Drag a rectangle around the hoop/net in the preview, or click the hoop center and adjust the box fields manually.
 5. Adjust rim box size, pre-roll, post-roll, confidence, sample FPS, and export format.
-6. Click `执行识别并剪辑`.
-7. Review the exported preview video in the browser.
+6. Click `识别候选` to generate reviewable made-shot candidates.
+7. Uncheck false positives in `候选进球复核`.
+8. Click `导出已选候选` to render only the kept clips, or use `执行识别并剪辑` for the legacy one-click path.
+9. Optional: enter labeled made-shot times and click `评估候选准确率` to calculate precision, recall, and F1.
 
 Full video recognition requires optional vision dependencies and FFmpeg:
 
@@ -78,7 +80,7 @@ The detector uses YOLO sports-ball detection near the calibrated rim, orange-bal
 
 ## Accuracy Evaluation
 
-Accuracy claims require labeled made-shot times. Use `hobby_basketball.evaluation.evaluate_event_times` to compare predicted event timestamps with ground truth labels:
+Accuracy claims require labeled made-shot times. The GUI can compare current kept candidates with manually entered labels, and `hobby_basketball.evaluation.evaluate_event_times` can do the same in code:
 
 ```python
 from hobby_basketball.evaluation import evaluate_event_times

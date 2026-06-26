@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from hobby_basketball.clips import build_clip_intervals, merge_intervals
 from hobby_basketball.detector import DEFAULT_MODEL_NAME, DEFAULT_SAMPLE_FPS, scan_video_for_made_shots
+from hobby_basketball.evaluation import EventEvaluationReport, evaluate_event_times
 from hobby_basketball.ffmpeg_export import export_reel
 from hobby_basketball.models import ClipInterval, MadeShotEvent
 from hobby_basketball.trajectory import RimCalibration
@@ -45,11 +46,30 @@ class ProcessVideoRequest(BaseModel):
     model_name: str = DEFAULT_MODEL_NAME
 
 
+class DetectVideoResponse(BaseModel):
+    events: list[MadeShotEvent]
+    clips: list[ClipInterval]
+
+
+class ExportEventsRequest(BaseModel):
+    video_id: str
+    events: list[MadeShotEvent]
+    pre_seconds: float = Field(default=5.0, ge=0)
+    post_seconds: float = Field(default=1.5, gt=0)
+    output_format: str = "mp4"
+
+
 class ProcessVideoResponse(BaseModel):
     events: list[MadeShotEvent]
     clips: list[ClipInterval]
     output_path: str
     preview_url: str
+
+
+class EvaluateEventsRequest(BaseModel):
+    predicted_times: list[float]
+    truth_times: list[float]
+    tolerance_sec: float = Field(default=1.0, gt=0)
 
 
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
@@ -71,6 +91,15 @@ def plan_clips(request: PlanClipsRequest) -> PlanClipsResponse:
     if request.merge_overlaps:
         clips = merge_intervals(clips)
     return PlanClipsResponse(clips=clips)
+
+
+@app.post("/api/evaluate-events", response_model=EventEvaluationReport)
+def evaluate_events(request: EvaluateEventsRequest) -> EventEvaluationReport:
+    return evaluate_event_times(
+        request.predicted_times,
+        request.truth_times,
+        tolerance_sec=request.tolerance_sec,
+    )
 
 
 @app.post("/api/upload-video", response_model=UploadVideoResponse)
@@ -103,11 +132,21 @@ def export_preview(filename: str):
 
 @app.post("/api/process-video", response_model=ProcessVideoResponse)
 def process_video(request: ProcessVideoRequest) -> ProcessVideoResponse:
+    detected = detect_video(request)
+    return export_events(
+        ExportEventsRequest(
+            video_id=request.video_id,
+            events=detected.events,
+            pre_seconds=request.pre_seconds,
+            post_seconds=request.post_seconds,
+            output_format=request.output_format,
+        )
+    )
+
+
+@app.post("/api/detect-video", response_model=DetectVideoResponse)
+def detect_video(request: ProcessVideoRequest) -> DetectVideoResponse:
     video_path = _get_video_path(request.video_id)
-    try:
-        output_format = normalize_output_format(request.output_format)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         events = scan_video_for_made_shots(
@@ -125,6 +164,25 @@ def process_video(request: ProcessVideoRequest) -> ProcessVideoResponse:
         raise HTTPException(status_code=422, detail="未识别到进球片段，请检查篮筐标定或降低置信度")
 
     clips = merge_intervals(build_clip_intervals(events, request.pre_seconds, request.post_seconds))
+    return DetectVideoResponse(events=events, clips=clips)
+
+
+@app.post("/api/export-events", response_model=ProcessVideoResponse)
+def export_events(request: ExportEventsRequest) -> ProcessVideoResponse:
+    video_path = _get_video_path(request.video_id)
+    try:
+        output_format = normalize_output_format(request.output_format)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    events = [
+        event.model_copy(update={"video_path": str(video_path)})
+        for event in request.events
+    ]
+    clips = merge_intervals(build_clip_intervals(events, request.pre_seconds, request.post_seconds))
+    if not clips:
+        raise HTTPException(status_code=422, detail="没有已保留的候选片段可导出")
+
     final_path = export_path(request.video_id, output_format)
     clip_dir = final_path.with_suffix("")
     try:

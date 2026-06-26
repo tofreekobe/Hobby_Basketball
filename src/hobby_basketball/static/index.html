@@ -47,7 +47,8 @@
         margin-top: 12px;
       }
       input,
-      select {
+      select,
+      textarea {
         box-sizing: border-box;
         width: 100%;
         margin-top: 6px;
@@ -126,6 +127,24 @@
         grid-template-columns: 1fr 1fr;
         gap: 10px;
       }
+      .candidate-list {
+        display: grid;
+        gap: 8px;
+      }
+      .candidate-item {
+        display: grid;
+        grid-template-columns: auto 90px 90px 1fr;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid #d8dee8;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 13px;
+      }
+      .candidate-item input {
+        margin: 0;
+        width: auto;
+      }
       .error {
         color: #b91c1c;
       }
@@ -195,6 +214,11 @@
             <option value="mp4">MP4</option>
             <option value="mov">MOV</option>
           </select>
+          <button id="detectBtn" onclick="detectCandidates()" disabled>识别候选</button>
+          <button id="exportSelectedBtn" class="secondary" onclick="exportSelectedCandidates()" disabled>导出已选候选</button>
+          <label>人工标注进球时间</label>
+          <textarea id="truthTimes" rows="3" placeholder="例如：18.4, 44.7, 51.2"></textarea>
+          <button id="evaluateBtn" class="secondary" onclick="evaluateCandidates()" disabled>评估候选准确率</button>
           <button id="processBtn" onclick="processVideo()" disabled>执行识别并剪辑</button>
         </aside>
 
@@ -225,6 +249,12 @@
             </div>
           </div>
           <div>
+            <h3>候选进球复核</h3>
+            <div id="candidateList" class="candidate-list">
+              <p class="hint">识别候选后，可取消勾选误报，再导出已选片段。</p>
+            </div>
+          </div>
+          <div>
             <h3>执行结果</h3>
             <pre id="output">等待上传视频...</pre>
           </div>
@@ -233,6 +263,7 @@
     </div>
     <script>
       let currentVideoId = null;
+      let currentEvents = [];
       let rimDragStart = null;
       let suppressNextRimClickUntil = 0;
 
@@ -267,8 +298,13 @@
             return;
           }
           currentVideoId = data.video_id;
+          currentEvents = [];
           document.getElementById("sourcePreview").src = data.preview_url;
           document.getElementById("processBtn").disabled = false;
+          document.getElementById("detectBtn").disabled = false;
+          document.getElementById("exportSelectedBtn").disabled = true;
+          document.getElementById("evaluateBtn").disabled = true;
+          renderCandidateList([]);
           document.getElementById("uploadStatus").textContent = `已上传：${data.filename}`;
           setOutput(data);
         } catch (error) {
@@ -383,6 +419,151 @@
         const hw = Number(document.getElementById("rimHalfWidth").value) * scaleX;
         const hh = Number(document.getElementById("rimHalfHeight").value) * scaleY;
         updateRimOverlay({x: cx - hw, y: cy - hh}, {x: cx + hw, y: cy + hh});
+      }
+
+      function buildProcessPayload() {
+        return {
+          video_id: currentVideoId,
+          pre_seconds: Number(document.getElementById("preSeconds").value),
+          post_seconds: Number(document.getElementById("postSeconds").value),
+          output_format: document.getElementById("outputFormat").value,
+          confidence: Number(document.getElementById("confidence").value),
+          sample_fps: Number(document.getElementById("sampleFps").value),
+          device: document.getElementById("device").value,
+          rim: {
+            center_x: Number(document.getElementById("rimX").value),
+            center_y: Number(document.getElementById("rimY").value),
+            half_width: Number(document.getElementById("rimHalfWidth").value),
+            half_height: Number(document.getElementById("rimHalfHeight").value)
+          }
+        };
+      }
+
+      async function detectCandidates() {
+        if (!currentVideoId) {
+          setOutput("请先上传视频。", true);
+          return;
+        }
+        const button = document.getElementById("detectBtn");
+        button.disabled = true;
+        button.textContent = "识别候选中...";
+        setOutput("正在识别候选进球，请稍等。");
+        try {
+          const response = await fetch("/api/detect-video", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(buildProcessPayload())
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            setOutput(data.detail || "识别候选失败", true);
+            return;
+          }
+          currentEvents = data.events.map((event) => ({...event, kept: event.kept !== false}));
+          renderCandidateList(currentEvents);
+          document.getElementById("exportSelectedBtn").disabled = currentEvents.length === 0;
+          document.getElementById("evaluateBtn").disabled = currentEvents.length === 0;
+          setOutput(data);
+        } catch (error) {
+          setOutput(`识别候选失败：${error}`, true);
+        } finally {
+          button.disabled = false;
+          button.textContent = "识别候选";
+        }
+      }
+
+      function renderCandidateList(events) {
+        const list = document.getElementById("candidateList");
+        if (!events.length) {
+          list.innerHTML = '<p class="hint">识别候选后，可取消勾选误报，再导出已选片段。</p>';
+          return;
+        }
+        list.innerHTML = "";
+        for (const event of events) {
+          const item = document.createElement("label");
+          item.className = "candidate-item";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = event.kept !== false;
+          checkbox.onchange = () => {
+            event.kept = checkbox.checked;
+          };
+          const time = document.createElement("span");
+          time.textContent = `${Number(event.t_make).toFixed(2)}s`;
+          const confidence = document.createElement("span");
+          confidence.textContent = `${Math.round(Number(event.confidence) * 100)}%`;
+          const notes = document.createElement("span");
+          notes.textContent = event.notes || event.id;
+          item.append(checkbox, time, confidence, notes);
+          list.appendChild(item);
+        }
+      }
+
+      function selectedEvents() {
+        return currentEvents.filter((event) => event.kept !== false);
+      }
+
+      async function exportSelectedCandidates() {
+        const events = selectedEvents();
+        if (!events.length) {
+          setOutput("请至少保留一个候选片段。", true);
+          return;
+        }
+        const button = document.getElementById("exportSelectedBtn");
+        button.disabled = true;
+        button.textContent = "导出中...";
+        try {
+          const response = await fetch("/api/export-events", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              video_id: currentVideoId,
+              events,
+              pre_seconds: Number(document.getElementById("preSeconds").value),
+              post_seconds: Number(document.getElementById("postSeconds").value),
+              output_format: document.getElementById("outputFormat").value
+            })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            setOutput(data.detail || "导出失败", true);
+            return;
+          }
+          document.getElementById("exportPreview").src = data.preview_url;
+          setOutput(data);
+        } catch (error) {
+          setOutput(`导出失败：${error}`, true);
+        } finally {
+          button.disabled = false;
+          button.textContent = "导出已选候选";
+        }
+      }
+
+      function parseTruthTimes() {
+        return document.getElementById("truthTimes").value
+          .split(/[,\n\s]+/)
+          .map((value) => Number(value.trim()))
+          .filter((value) => Number.isFinite(value) && value >= 0);
+      }
+
+      async function evaluateCandidates() {
+        const truthTimes = parseTruthTimes();
+        if (!truthTimes.length) {
+          setOutput("请先输入人工标注的进球时间。", true);
+          return;
+        }
+        const predictedTimes = selectedEvents().map((event) => Number(event.t_make));
+        const response = await fetch("/api/evaluate-events", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            predicted_times: predictedTimes,
+            truth_times: truthTimes,
+            tolerance_sec: 1.0
+          })
+        });
+        const data = await response.json();
+        setOutput(data, !response.ok);
       }
 
       async function processVideo() {
