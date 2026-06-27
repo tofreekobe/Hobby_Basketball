@@ -35,6 +35,16 @@ def test_rejects_bounce_back_above_rim():
     assert detect_made_shots(samples, rim) == []
 
 
+def test_rejects_crossing_samples_with_unrealistic_horizontal_jump():
+    rim = RimCalibration(center_x=100, center_y=100, half_width=20, half_height=10)
+    samples = [
+        BallSample(t=1.00, x=72, y=80, confidence=0.8),
+        BallSample(t=1.25, x=128, y=118, confidence=0.8),
+    ]
+
+    assert detect_made_shots(samples, rim) == []
+
+
 def test_detects_ball_entering_net_region_without_strict_upper_crossing():
     rim = RimCalibration(center_x=927, center_y=141, half_width=42, half_height=50)
     samples = [

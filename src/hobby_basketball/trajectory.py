@@ -28,6 +28,7 @@ def detect_made_shots(
     down_margin_frac: float = 1.5,
     max_cross_gap_sec: float = 0.6,
     min_descent_px_s: float = 60.0,
+    max_cross_horizontal_shift_frac: float = 1.5,
     bounce_up_window_sec: float = 0.5,
     min_spacing_sec: float = 3.0,
     video_path: str = "",
@@ -37,6 +38,7 @@ def detect_made_shots(
     x_hi = rim.center_x + rim.half_width * (1 + x_gate_margin)
     y_above = rim.center_y - rim.half_height * up_margin_frac
     y_below = rim.center_y + rim.half_height * down_margin_frac
+    max_cross_horizontal_shift = max(36.0, rim.half_width * max_cross_horizontal_shift_frac)
 
     gated = [sample for sample in ordered if x_lo <= sample.x <= x_hi]
     makes: list[MadeShotEvent] = []
@@ -52,6 +54,8 @@ def detect_made_shots(
             if gap > max_cross_gap_sec:
                 break
             if below.y <= y_below:
+                continue
+            if abs(below.x - above.x) > max_cross_horizontal_shift:
                 continue
             descent = (below.y - above.y) / max(gap, 1e-3)
             if descent < min_descent_px_s:
