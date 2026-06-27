@@ -388,6 +388,66 @@ def test_review_regression_summary_reruns_detector_against_review_labels(tmp_pat
     assert detector_calls[0][0] == video_path
 
 
+def test_review_regression_summary_uses_all_reviews_for_same_video_and_rim(tmp_path, monkeypatch):
+    review_dir = tmp_path / "reviews"
+    review_dir.mkdir()
+    video_path = tmp_path / "game.mp4"
+    video_path.write_bytes(b"fake-video")
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", review_dir)
+
+    common_payload = {
+        "video_id": "video-1",
+        "rim": {"center_x": 100, "center_y": 80, "half_width": 42, "half_height": 50},
+    }
+    first_review = {
+        **common_payload,
+        "review_id": "review-1",
+        "events": [
+            {"id": "make-1", "video_path": str(video_path), "t_make": 10.0, "confidence": 0.9, "kept": True},
+            {"id": "false-1", "video_path": str(video_path), "t_make": 30.0, "confidence": 0.7, "kept": False},
+        ],
+    }
+    second_review = {
+        **common_payload,
+        "review_id": "review-2",
+        "events": [
+            {"id": "make-2", "video_path": str(video_path), "t_make": 99.0, "confidence": 0.6, "kept": True},
+        ],
+    }
+    (review_dir / "review-1.json").write_text(json.dumps(first_review), encoding="utf-8")
+    (review_dir / "review-2.json").write_text(json.dumps(second_review), encoding="utf-8")
+
+    detector_calls = []
+
+    def fake_detector(video_path_arg, rim, **kwargs):
+        detector_calls.append((video_path_arg, rim, kwargs))
+        return [
+            MadeShotEvent(id="make-current-1", video_path="", t_make=10.2, confidence=0.9),
+            MadeShotEvent(id="false-current-1", video_path="", t_make=30.1, confidence=0.7),
+            MadeShotEvent(id="make-current-2", video_path="", t_make=99.0, confidence=0.6),
+            MadeShotEvent(id="unreviewed-current-1", video_path="", t_make=120.0, confidence=0.5),
+        ]
+
+    monkeypatch.setattr("hobby_basketball.app.scan_video_for_made_shots", fake_detector)
+    client = TestClient(app)
+
+    response = client.get("/api/review-regression-summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["review_count"] == 2
+    assert data["reviewed_candidate_count"] == 3
+    assert data["accepted_label_count"] == 2
+    assert data["rejected_label_count"] == 1
+    assert data["accepted_preserved_count"] == 2
+    assert data["false_positive_recurrences"] == 1
+    assert data["unreviewed_prediction_count"] == 1
+    assert data["reviewed_precision"] == 0.666667
+    assert data["accepted_recall"] == 1.0
+    assert data["evaluated_review_ids"] == ["review-1", "review-2"]
+    assert len(detector_calls) == 1
+
+
 def test_review_regression_sheet_generates_unreviewed_candidate_sheet(tmp_path, monkeypatch):
     review_dir = tmp_path / "reviews"
     review_dir.mkdir()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import uuid
@@ -481,36 +482,28 @@ def review_regression_summary(
     target_recall: float = 0.95,
 ) -> ReviewRegressionSummary:
     reviews = _load_candidate_reviews()
+    review_groups, skipped_review_ids = _candidate_review_groups(reviews)
     accepted_label_count = 0
     rejected_label_count = 0
     accepted_preserved_count = 0
     false_positive_recurrences = 0
     unreviewed_prediction_count = 0
     evaluated_review_ids: list[str] = []
-    skipped_review_ids: list[str] = []
 
-    for review in reviews:
-        review_id = str(review.get("review_id") or "")
-        video_path = _review_video_path(review)
-        rim = _review_rim(review)
-        events = _review_events(review)
-        if video_path is None or rim is None or not events:
-            skipped_review_ids.append(review_id)
-            continue
-
-        accepted_times = [event.t_make for event in events if event.kept]
-        rejected_times = [event.t_make for event in events if not event.kept]
+    for group in review_groups:
+        accepted_times = [event.t_make for event in group.events if event.kept]
+        rejected_times = [event.t_make for event in group.events if not event.kept]
         try:
             predictions = scan_video_for_made_shots(
-                video_path,
-                rim,
+                group.video_path,
+                group.rim,
                 sample_fps=sample_fps,
                 confidence=confidence,
                 model_name=model_name,
                 device=device,
             )
         except Exception:
-            skipped_review_ids.append(review_id)
+            skipped_review_ids.extend(group.review_ids)
             continue
 
         predicted_times = [event.t_make for event in predictions]
@@ -535,7 +528,7 @@ def review_regression_summary(
         accepted_preserved_count += accepted_report.true_positives
         false_positive_recurrences += rejected_report.true_positives
         unreviewed_prediction_count += len(reviewed_report.unmatched_predictions)
-        evaluated_review_ids.append(review_id)
+        evaluated_review_ids.extend(group.review_ids)
 
     missed_accepted_count = accepted_label_count - accepted_preserved_count
     rejected_suppressed_count = rejected_label_count - false_positive_recurrences
@@ -690,23 +683,24 @@ def _load_candidate_reviews() -> list[dict[str, object]]:
 ReviewGroupKey = tuple[str, float, float, float, float]
 
 
-def _unreviewed_review_predictions(
-    *,
-    sample_fps: float,
-    confidence: float,
-    device: str,
-    model_name: str,
-    tolerance_sec: float,
-) -> tuple[list[MadeShotEvent], Path | None, str, RimCalibration | None, list[str], list[str]]:
-    ordered_group_keys: list[ReviewGroupKey] = []
-    video_paths_by_group: dict[ReviewGroupKey, Path] = {}
-    video_ids_by_group: dict[ReviewGroupKey, str] = {}
-    rims_by_group: dict[ReviewGroupKey, RimCalibration] = {}
-    review_events_by_group: dict[ReviewGroupKey, list[MadeShotEvent]] = {}
-    review_ids_by_group: dict[ReviewGroupKey, list[str]] = {}
+@dataclass
+class CandidateReviewGroup:
+    key: ReviewGroupKey
+    video_path: Path
+    video_id: str
+    rim: RimCalibration
+    events: list[MadeShotEvent] = field(default_factory=list)
+    review_ids: list[str] = field(default_factory=list)
+
+
+def _candidate_review_groups(
+    reviews: list[dict[str, object]],
+) -> tuple[list[CandidateReviewGroup], list[str]]:
+    review_groups_by_key: dict[ReviewGroupKey, CandidateReviewGroup] = {}
+    ordered_groups: list[CandidateReviewGroup] = []
     skipped_review_ids: list[str] = []
 
-    for review in _load_candidate_reviews():
+    for review in reviews:
         review_id = str(review.get("review_id") or "")
         video_path = _review_video_path(review)
         rim = _review_rim(review)
@@ -716,19 +710,35 @@ def _unreviewed_review_predictions(
             continue
 
         group_key = _review_group_key(video_path, rim)
-        if group_key not in review_events_by_group:
-            video_paths_by_group[group_key] = video_path
-            video_ids_by_group[group_key] = str(review.get("video_id") or "")
-            rims_by_group[group_key] = rim
-            review_events_by_group[group_key] = []
-            review_ids_by_group[group_key] = []
-            ordered_group_keys.append(group_key)
+        group = review_groups_by_key.get(group_key)
+        if group is None:
+            group = CandidateReviewGroup(
+                key=group_key,
+                video_path=video_path,
+                video_id=str(review.get("video_id") or ""),
+                rim=rim,
+            )
+            review_groups_by_key[group_key] = group
+            ordered_groups.append(group)
 
         video_id = str(review.get("video_id") or "")
-        if video_id and not video_ids_by_group[group_key]:
-            video_ids_by_group[group_key] = video_id
-        review_events_by_group[group_key].extend(review_events)
-        review_ids_by_group[group_key].append(review_id)
+        if video_id and not group.video_id:
+            group.video_id = video_id
+        group.events.extend(review_events)
+        group.review_ids.append(review_id)
+
+    return ordered_groups, skipped_review_ids
+
+
+def _unreviewed_review_predictions(
+    *,
+    sample_fps: float,
+    confidence: float,
+    device: str,
+    model_name: str,
+    tolerance_sec: float,
+) -> tuple[list[MadeShotEvent], Path | None, str, RimCalibration | None, list[str], list[str]]:
+    review_groups, skipped_review_ids = _candidate_review_groups(_load_candidate_reviews())
 
     all_unreviewed: list[MadeShotEvent] = []
     first_video_path: Path | None = None
@@ -737,41 +747,36 @@ def _unreviewed_review_predictions(
     source_review_ids: list[str] = []
     first_group_key: ReviewGroupKey | None = None
 
-    for group_key in ordered_group_keys:
-        video_path = video_paths_by_group[group_key]
-        rim = rims_by_group[group_key]
-        review_events = review_events_by_group[group_key]
-        review_ids = review_ids_by_group[group_key]
-
+    for group in review_groups:
         try:
             predictions = scan_video_for_made_shots(
-                video_path,
-                rim,
+                group.video_path,
+                group.rim,
                 sample_fps=sample_fps,
                 confidence=confidence,
                 model_name=model_name,
                 device=device,
             )
         except Exception:
-            skipped_review_ids.extend(str(review_id) for review_id in review_ids)
+            skipped_review_ids.extend(group.review_ids)
             continue
 
-        reviewed_times = [event.t_make for event in review_events]
+        reviewed_times = [event.t_make for event in group.events]
         unreviewed = _unmatched_prediction_events(predictions, reviewed_times, tolerance_sec)
         if not unreviewed:
-            source_review_ids.extend(str(review_id) for review_id in review_ids)
+            source_review_ids.extend(group.review_ids)
             continue
 
         if first_video_path is None:
-            first_video_path = video_path
-            first_video_id = video_ids_by_group[group_key]
-            first_rim = rim
-            first_group_key = group_key
-        if group_key != first_group_key:
-            skipped_review_ids.extend(str(review_id) for review_id in review_ids)
+            first_video_path = group.video_path
+            first_video_id = group.video_id
+            first_rim = group.rim
+            first_group_key = group.key
+        if group.key != first_group_key:
+            skipped_review_ids.extend(group.review_ids)
             continue
         all_unreviewed.extend(unreviewed)
-        source_review_ids.extend(str(review_id) for review_id in review_ids)
+        source_review_ids.extend(group.review_ids)
 
     return all_unreviewed, first_video_path, first_video_id, first_rim, source_review_ids, skipped_review_ids
 
