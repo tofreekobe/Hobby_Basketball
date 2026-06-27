@@ -72,6 +72,9 @@ def test_index_contains_file_picker_and_export_controls():
     assert "/api/save-candidate-review" in html
     assert "/api/review-regression-summary" in html
     assert 'id="reviewRegressionSummaryBtn"' in html
+    assert "/api/review-regression-sheet" in html
+    assert 'id="reviewRegressionSheetBtn"' in html
+    assert "generateReviewRegressionSheet" in html
     assert "/api/device-status" in html
     assert "refreshDeviceStatus" in html
     assert 'id="outputFormat"' in html
@@ -380,6 +383,57 @@ def test_review_regression_summary_reruns_detector_against_review_labels(tmp_pat
     assert data["metrics_scope"] == "reviewed_candidate_labels_only"
     assert data["evaluated_review_ids"] == ["review-1"]
     assert detector_calls[0][0] == video_path
+
+
+def test_review_regression_sheet_generates_unreviewed_candidate_sheet(tmp_path, monkeypatch):
+    review_dir = tmp_path / "reviews"
+    review_dir.mkdir()
+    video_path = tmp_path / "game.mp4"
+    video_path.write_bytes(b"fake-video")
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", review_dir)
+    review_payload = {
+        "review_id": "review-1",
+        "video_id": "video-1",
+        "rim": {"center_x": 100, "center_y": 80, "half_width": 42, "half_height": 50},
+        "events": [
+            {"id": "make-1", "video_path": str(video_path), "t_make": 10.0, "confidence": 0.9, "kept": True},
+            {"id": "false-1", "video_path": str(video_path), "t_make": 30.0, "confidence": 0.7, "kept": False},
+        ],
+    }
+    (review_dir / "review-1.json").write_text(json.dumps(review_payload), encoding="utf-8")
+
+    def fake_detector(video_path_arg, rim, **kwargs):
+        return [
+            MadeShotEvent(id="make-current-1", video_path="", t_make=10.2, confidence=0.9),
+            MadeShotEvent(id="false-current-1", video_path="", t_make=30.1, confidence=0.7),
+            MadeShotEvent(id="unreviewed-current-1", video_path="", t_make=99.0, confidence=0.6),
+        ]
+
+    sheet_calls = []
+
+    def fake_review_sheet(video_path_arg, events, rim, output_path):
+        sheet_calls.append((video_path_arg, events, rim, output_path))
+        output_path.write_bytes(b"\xff\xd8fake-jpeg")
+
+    monkeypatch.setattr("hobby_basketball.app.scan_video_for_made_shots", fake_detector)
+    monkeypatch.setattr("hobby_basketball.app.build_candidate_review_sheet", fake_review_sheet)
+    client = TestClient(app)
+
+    response = client.get("/api/review-regression-sheet")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["events"][0]["id"] == "unreviewed-current-1"
+    assert data["events"][0]["t_make"] == 99.0
+    assert data["video_id"] == "video-1"
+    assert data["source_review_ids"] == ["review-1"]
+    saved = review_dir / f'{data["sheet_id"]}.jpg'
+    assert data["review_path"] == str(saved)
+    assert data["preview_url"] == f'/api/reviews/{data["sheet_id"]}.jpg'
+    assert saved.read_bytes().startswith(b"\xff\xd8")
+    assert len(sheet_calls) == 1
+    assert sheet_calls[0][0] == video_path
+    assert [event.t_make for event in sheet_calls[0][1]] == [99.0]
 
 
 def test_evaluate_events_endpoint_returns_precision_recall_f1():

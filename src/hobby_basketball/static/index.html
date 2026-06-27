@@ -221,6 +221,7 @@
           <button id="reviewSheetBtn" class="secondary" onclick="generateReviewSheet()" disabled>生成候选审查图</button>
           <button id="saveCandidateReviewBtn" class="secondary" onclick="saveCandidateReview()" disabled>保存候选复核</button>
           <button id="reviewRegressionSummaryBtn" class="secondary" onclick="loadReviewRegressionSummary()">汇总复核回归</button>
+          <button id="reviewRegressionSheetBtn" class="secondary" onclick="generateReviewRegressionSheet()">生成未复核候选图</button>
           <label>人工标注进球时间</label>
           <textarea id="truthTimes" rows="3" placeholder="例如：18.4, 44.7, 51.2"></textarea>
           <button id="markTruthBtn" class="secondary" onclick="markCurrentTruthTime()" disabled>添加当前时间为标注</button>
@@ -721,6 +722,27 @@
         const response = await fetch(`/api/review-regression-summary?${params}`);
         const data = await response.json();
         setOutput(data, !response.ok);
+      }
+
+      async function generateReviewRegressionSheet() {
+        const params = new URLSearchParams({
+          sample_fps: String(Number(document.getElementById("sampleFps").value)),
+          confidence: String(Number(document.getElementById("confidence").value)),
+          device: document.getElementById("device").value,
+          model_name: "none",
+          tolerance_sec: "1.0"
+        });
+        const response = await fetch(`/api/review-regression-sheet?${params}`);
+        const data = await response.json();
+        setOutput(data, !response.ok);
+        if (response.ok && data.preview_url) {
+          currentVideoId = data.video_id || currentVideoId;
+          currentEvents = (data.events || []).map((event) => ({...event, kept: event.kept !== false}));
+          renderCandidateList(currentEvents);
+          document.getElementById("saveCandidateReviewBtn").disabled = currentEvents.length === 0;
+          document.getElementById("exportSelectedBtn").disabled = currentEvents.length === 0;
+          window.open(data.preview_url, "_blank");
+        }
       }
 
       function parseTruthTimes() {

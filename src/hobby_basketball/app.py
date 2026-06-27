@@ -128,6 +128,13 @@ class CandidateReviewSheetResponse(BaseModel):
     preview_url: str
 
 
+class ReviewRegressionSheetResponse(CandidateReviewSheetResponse):
+    video_id: str
+    events: list[MadeShotEvent]
+    source_review_ids: list[str]
+    skipped_review_ids: list[str]
+
+
 class SaveCandidateReviewRequest(BaseModel):
     video_id: str
     events: list[MadeShotEvent]
@@ -565,6 +572,44 @@ def review_regression_summary(
     )
 
 
+@app.get("/api/review-regression-sheet", response_model=ReviewRegressionSheetResponse)
+def review_regression_sheet(
+    sample_fps: float = DEFAULT_SAMPLE_FPS,
+    confidence: float = 0.15,
+    device: str = "cpu",
+    model_name: str = DEFAULT_MODEL_NAME,
+    tolerance_sec: float = 1.0,
+) -> ReviewRegressionSheetResponse:
+    events, video_path, video_id, rim, source_review_ids, skipped_review_ids = _unreviewed_review_predictions(
+        sample_fps=sample_fps,
+        confidence=confidence,
+        device=device,
+        model_name=model_name,
+        tolerance_sec=tolerance_sec,
+    )
+    if not events or video_path is None or rim is None:
+        raise HTTPException(status_code=422, detail="No unreviewed predictions to review")
+
+    sheet_id = uuid.uuid4().hex
+    review_path = REVIEW_DIR / f"{sheet_id}.jpg"
+    try:
+        build_candidate_review_sheet(video_path, events, rim, review_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return ReviewRegressionSheetResponse(
+        sheet_id=sheet_id,
+        review_path=str(review_path),
+        preview_url=f"/api/reviews/{sheet_id}.jpg",
+        video_id=video_id,
+        events=events,
+        source_review_ids=source_review_ids,
+        skipped_review_ids=skipped_review_ids,
+    )
+
+
 @app.post("/api/export-events", response_model=ProcessVideoResponse)
 def export_events(request: ExportEventsRequest) -> ProcessVideoResponse:
     video_path = _get_video_path(request.video_id)
@@ -638,6 +683,84 @@ def _load_candidate_reviews() -> list[dict[str, object]]:
         if isinstance(payload, dict):
             reviews.append(payload)
     return reviews
+
+
+def _unreviewed_review_predictions(
+    *,
+    sample_fps: float,
+    confidence: float,
+    device: str,
+    model_name: str,
+    tolerance_sec: float,
+) -> tuple[list[MadeShotEvent], Path | None, str, RimCalibration | None, list[str], list[str]]:
+    all_unreviewed: list[MadeShotEvent] = []
+    first_video_path: Path | None = None
+    first_video_id = ""
+    first_rim: RimCalibration | None = None
+    source_review_ids: list[str] = []
+    skipped_review_ids: list[str] = []
+
+    for review in _load_candidate_reviews():
+        review_id = str(review.get("review_id") or "")
+        video_path = _review_video_path(review)
+        rim = _review_rim(review)
+        review_events = _review_events(review)
+        if video_path is None or rim is None or not review_events:
+            skipped_review_ids.append(review_id)
+            continue
+
+        try:
+            predictions = scan_video_for_made_shots(
+                video_path,
+                rim,
+                sample_fps=sample_fps,
+                confidence=confidence,
+                model_name=model_name,
+                device=device,
+            )
+        except Exception:
+            skipped_review_ids.append(review_id)
+            continue
+
+        reviewed_times = [event.t_make for event in review_events]
+        unreviewed = _unmatched_prediction_events(predictions, reviewed_times, tolerance_sec)
+        if not unreviewed:
+            source_review_ids.append(review_id)
+            continue
+
+        if first_video_path is None:
+            first_video_path = video_path
+            first_video_id = str(review.get("video_id") or "")
+            first_rim = rim
+        if video_path != first_video_path:
+            skipped_review_ids.append(review_id)
+            continue
+        all_unreviewed.extend(unreviewed)
+        source_review_ids.append(review_id)
+
+    return all_unreviewed, first_video_path, first_video_id, first_rim, source_review_ids, skipped_review_ids
+
+
+def _unmatched_prediction_events(
+    predictions: list[MadeShotEvent],
+    reviewed_times: list[float],
+    tolerance_sec: float,
+) -> list[MadeShotEvent]:
+    remaining = sorted(float(value) for value in reviewed_times)
+    unmatched: list[MadeShotEvent] = []
+    for prediction in sorted(predictions, key=lambda event: event.t_make):
+        best_index: int | None = None
+        best_delta = tolerance_sec
+        for index, reviewed_time in enumerate(remaining):
+            delta = abs(prediction.t_make - reviewed_time)
+            if delta <= best_delta:
+                best_index = index
+                best_delta = delta
+        if best_index is None:
+            unmatched.append(prediction)
+        else:
+            remaining.pop(best_index)
+    return unmatched
 
 
 def _review_video_path(review: dict[str, object]) -> Path | None:
