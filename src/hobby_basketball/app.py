@@ -131,6 +131,7 @@ class CandidateReviewSheetResponse(BaseModel):
 
 class ReviewRegressionSheetResponse(CandidateReviewSheetResponse):
     video_id: str
+    rim: RimCalibration
     events: list[MadeShotEvent]
     source_review_ids: list[str]
     skipped_review_ids: list[str]
@@ -617,6 +618,7 @@ def review_regression_sheet(
         review_path=str(review_path),
         preview_url=f"/api/reviews/{sheet_id}.jpg",
         video_id=video_id,
+        rim=rim,
         events=events,
         source_review_ids=source_review_ids,
         skipped_review_ids=skipped_review_ids,

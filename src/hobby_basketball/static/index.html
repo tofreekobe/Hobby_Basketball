@@ -491,6 +491,26 @@
         updateRimOverlay({x: cx - hw, y: cy - hh}, {x: cx + hw, y: cy + hh});
       }
 
+      function applyRimFromData(rim) {
+        if (!rim) {
+          return;
+        }
+        const fields = [
+          ["rimX", rim.center_x],
+          ["rimY", rim.center_y],
+          ["rimHalfWidth", rim.half_width],
+          ["rimHalfHeight", rim.half_height]
+        ];
+        for (const [id, value] of fields) {
+          const numberValue = Number(value);
+          if (Number.isFinite(numberValue)) {
+            document.getElementById(id).value = Math.round(numberValue);
+          }
+        }
+        ensureUsableRimBox();
+        drawRimOverlayFromInputs();
+      }
+
       function buildProcessPayload() {
         return {
           video_id: currentVideoId,
@@ -738,6 +758,7 @@
         if (response.ok && data.preview_url) {
           currentVideoId = data.video_id || currentVideoId;
           document.getElementById("sourcePreview").src = `/api/videos/${currentVideoId}`;
+          applyRimFromData(data.rim);
           currentEvents = (data.events || []).map((event) => ({...event, kept: event.kept !== false}));
           renderCandidateList(currentEvents);
           document.getElementById("saveCandidateReviewBtn").disabled = currentEvents.length === 0;

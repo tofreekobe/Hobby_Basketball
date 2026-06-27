@@ -75,6 +75,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert "/api/review-regression-sheet" in html
     assert 'id="reviewRegressionSheetBtn"' in html
     assert "generateReviewRegressionSheet" in html
+    assert "applyRimFromData" in html
+    assert "data.rim" in html
     assert "sourcePreview" in html
     assert "/api/videos/${currentVideoId}" in html
     assert "/api/device-status" in html
@@ -529,6 +531,7 @@ def test_review_regression_sheet_generates_unreviewed_candidate_sheet(tmp_path, 
     assert data["events"][0]["id"] == "unreviewed-current-1"
     assert data["events"][0]["t_make"] == 99.0
     assert data["video_id"] == "video-1"
+    assert data["rim"] == {"center_x": 100.0, "center_y": 80.0, "half_width": 42.0, "half_height": 50.0}
     assert data["source_review_ids"] == ["review-1"]
     saved = review_dir / f'{data["sheet_id"]}.jpg'
     assert data["review_path"] == str(saved)
