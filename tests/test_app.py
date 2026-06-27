@@ -442,6 +442,67 @@ def test_review_regression_sheet_generates_unreviewed_candidate_sheet(tmp_path, 
     assert preview.content == b"fake-video"
 
 
+def test_review_regression_sheet_uses_all_reviews_for_same_video_and_rim(tmp_path, monkeypatch):
+    review_dir = tmp_path / "reviews"
+    review_dir.mkdir()
+    video_path = tmp_path / "game.mp4"
+    video_path.write_bytes(b"fake-video")
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", review_dir)
+
+    common_payload = {
+        "video_id": "video-1",
+        "rim": {"center_x": 100, "center_y": 80, "half_width": 42, "half_height": 50},
+    }
+    first_review = {
+        **common_payload,
+        "review_id": "review-1",
+        "events": [
+            {"id": "make-1", "video_path": str(video_path), "t_make": 10.0, "confidence": 0.9, "kept": True},
+            {"id": "false-1", "video_path": str(video_path), "t_make": 30.0, "confidence": 0.7, "kept": False},
+        ],
+    }
+    second_review = {
+        **common_payload,
+        "review_id": "review-2",
+        "events": [
+            {"id": "reviewed-later", "video_path": str(video_path), "t_make": 99.0, "confidence": 0.6, "kept": True},
+        ],
+    }
+    (review_dir / "review-1.json").write_text(json.dumps(first_review), encoding="utf-8")
+    (review_dir / "review-2.json").write_text(json.dumps(second_review), encoding="utf-8")
+
+    detector_calls = []
+
+    def fake_detector(video_path_arg, rim, **kwargs):
+        detector_calls.append((video_path_arg, rim, kwargs))
+        return [
+            MadeShotEvent(id="make-current-1", video_path="", t_make=10.2, confidence=0.9),
+            MadeShotEvent(id="false-current-1", video_path="", t_make=30.1, confidence=0.7),
+            MadeShotEvent(id="reviewed-later-current", video_path="", t_make=99.0, confidence=0.6),
+            MadeShotEvent(id="new-unreviewed-current", video_path="", t_make=120.0, confidence=0.5),
+        ]
+
+    sheet_calls = []
+
+    def fake_review_sheet(video_path_arg, events, rim, output_path):
+        sheet_calls.append((video_path_arg, events, rim, output_path))
+        output_path.write_bytes(b"\xff\xd8fake-jpeg")
+
+    monkeypatch.setattr("hobby_basketball.app.scan_video_for_made_shots", fake_detector)
+    monkeypatch.setattr("hobby_basketball.app.build_candidate_review_sheet", fake_review_sheet)
+    client = TestClient(app)
+
+    response = client.get("/api/review-regression-sheet")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [event["t_make"] for event in data["events"]] == [120.0]
+    assert data["source_review_ids"] == ["review-1", "review-2"]
+    assert len(detector_calls) == 1
+    assert len(sheet_calls) == 1
+    assert [event.t_make for event in sheet_calls[0][1]] == [120.0]
+
+
 def test_evaluate_events_endpoint_returns_precision_recall_f1():
     client = TestClient(app)
 

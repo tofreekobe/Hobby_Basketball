@@ -687,6 +687,9 @@ def _load_candidate_reviews() -> list[dict[str, object]]:
     return reviews
 
 
+ReviewGroupKey = tuple[str, float, float, float, float]
+
+
 def _unreviewed_review_predictions(
     *,
     sample_fps: float,
@@ -695,11 +698,12 @@ def _unreviewed_review_predictions(
     model_name: str,
     tolerance_sec: float,
 ) -> tuple[list[MadeShotEvent], Path | None, str, RimCalibration | None, list[str], list[str]]:
-    all_unreviewed: list[MadeShotEvent] = []
-    first_video_path: Path | None = None
-    first_video_id = ""
-    first_rim: RimCalibration | None = None
-    source_review_ids: list[str] = []
+    ordered_group_keys: list[ReviewGroupKey] = []
+    video_paths_by_group: dict[ReviewGroupKey, Path] = {}
+    video_ids_by_group: dict[ReviewGroupKey, str] = {}
+    rims_by_group: dict[ReviewGroupKey, RimCalibration] = {}
+    review_events_by_group: dict[ReviewGroupKey, list[MadeShotEvent]] = {}
+    review_ids_by_group: dict[ReviewGroupKey, list[str]] = {}
     skipped_review_ids: list[str] = []
 
     for review in _load_candidate_reviews():
@@ -711,6 +715,34 @@ def _unreviewed_review_predictions(
             skipped_review_ids.append(review_id)
             continue
 
+        group_key = _review_group_key(video_path, rim)
+        if group_key not in review_events_by_group:
+            video_paths_by_group[group_key] = video_path
+            video_ids_by_group[group_key] = str(review.get("video_id") or "")
+            rims_by_group[group_key] = rim
+            review_events_by_group[group_key] = []
+            review_ids_by_group[group_key] = []
+            ordered_group_keys.append(group_key)
+
+        video_id = str(review.get("video_id") or "")
+        if video_id and not video_ids_by_group[group_key]:
+            video_ids_by_group[group_key] = video_id
+        review_events_by_group[group_key].extend(review_events)
+        review_ids_by_group[group_key].append(review_id)
+
+    all_unreviewed: list[MadeShotEvent] = []
+    first_video_path: Path | None = None
+    first_video_id = ""
+    first_rim: RimCalibration | None = None
+    source_review_ids: list[str] = []
+    first_group_key: ReviewGroupKey | None = None
+
+    for group_key in ordered_group_keys:
+        video_path = video_paths_by_group[group_key]
+        rim = rims_by_group[group_key]
+        review_events = review_events_by_group[group_key]
+        review_ids = review_ids_by_group[group_key]
+
         try:
             predictions = scan_video_for_made_shots(
                 video_path,
@@ -721,26 +753,44 @@ def _unreviewed_review_predictions(
                 device=device,
             )
         except Exception:
-            skipped_review_ids.append(review_id)
+            skipped_review_ids.extend(str(review_id) for review_id in review_ids)
             continue
 
         reviewed_times = [event.t_make for event in review_events]
         unreviewed = _unmatched_prediction_events(predictions, reviewed_times, tolerance_sec)
         if not unreviewed:
-            source_review_ids.append(review_id)
+            source_review_ids.extend(str(review_id) for review_id in review_ids)
             continue
 
         if first_video_path is None:
             first_video_path = video_path
-            first_video_id = str(review.get("video_id") or "")
+            first_video_id = video_ids_by_group[group_key]
             first_rim = rim
-        if video_path != first_video_path:
-            skipped_review_ids.append(review_id)
+            first_group_key = group_key
+        if group_key != first_group_key:
+            skipped_review_ids.extend(str(review_id) for review_id in review_ids)
             continue
         all_unreviewed.extend(unreviewed)
-        source_review_ids.append(review_id)
+        source_review_ids.extend(str(review_id) for review_id in review_ids)
 
     return all_unreviewed, first_video_path, first_video_id, first_rim, source_review_ids, skipped_review_ids
+
+
+def _review_group_key(
+    video_path: Path,
+    rim: RimCalibration,
+) -> ReviewGroupKey:
+    try:
+        path_key = str(video_path.resolve()).casefold()
+    except OSError:
+        path_key = str(video_path).casefold()
+    return (
+        path_key,
+        round(float(rim.center_x), 3),
+        round(float(rim.center_y), 3),
+        round(float(rim.half_width), 3),
+        round(float(rim.half_height), 3),
+    )
 
 
 def _unmatched_prediction_events(
