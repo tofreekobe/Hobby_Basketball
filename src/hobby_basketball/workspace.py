@@ -11,6 +11,7 @@ WORKSPACE_ROOT = Path(os.getenv("HOBBY_BASKETBALL_WORKSPACE", Path.cwd() / "work
 UPLOAD_DIR = WORKSPACE_ROOT / "uploads"
 EXPORT_DIR = WORKSPACE_ROOT / "exports"
 EVALUATION_DIR = WORKSPACE_ROOT / "evaluations"
+REVIEW_DIR = WORKSPACE_ROOT / "reviews"
 
 
 def save_upload(file: UploadFile) -> tuple[str, Path]:

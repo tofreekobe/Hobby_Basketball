@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 
 from hobby_basketball.models import MadeShotEvent
 from hobby_basketball.app import app
@@ -52,6 +53,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert "startRimDrag" in html
     assert 'id="detectBtn"' in html
     assert 'id="exportSelectedBtn"' in html
+    assert 'id="reviewSheetBtn"' in html
     assert 'id="saveEvaluationBtn"' in html
     assert 'id="candidateList"' in html
     assert 'id="truthTimes"' in html
@@ -61,6 +63,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert "target_precision" in html
     assert "applyRecommendedThreshold" in html
     assert "/api/save-evaluation-run" in html
+    assert "/api/candidate-review-sheet" in html
     assert "/api/device-status" in html
     assert "refreshDeviceStatus" in html
     assert 'id="outputFormat"' in html
@@ -232,6 +235,57 @@ def test_export_events_exports_only_kept_candidates(monkeypatch):
     data = response.json()
     assert data["clips"][0]["event_ids"] == ["make-1"]
     assert len(exported["clips"]) == 1
+
+
+def test_candidate_review_sheet_persists_jpeg_for_uploaded_video(tmp_path, monkeypatch):
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    monkeypatch.setattr("hobby_basketball.workspace.UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", tmp_path / "reviews")
+    video_path = tmp_path / "game.mp4"
+    writer = cv2.VideoWriter(
+        str(video_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        10.0,
+        (200, 160),
+    )
+    assert writer.isOpened()
+    for frame_index in range(10):
+        frame = np.zeros((160, 200, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (80, 70), (120, 95), (240, 240, 240), 2)
+        cv2.circle(frame, (100, 82 + frame_index), 7, (0, 95, 255), -1)
+        writer.write(frame)
+    writer.release()
+
+    client = TestClient(app)
+    with video_path.open("rb") as handle:
+        upload = client.post(
+            "/api/upload-video",
+            files={"file": ("game.mp4", handle, "video/mp4")},
+        ).json()
+
+    response = client.post(
+        "/api/candidate-review-sheet",
+        json={
+            "video_id": upload["video_id"],
+            "events": [
+                {"id": "make-1", "video_path": "", "t_make": 0.5, "confidence": 0.86, "notes": "rim-net entry"}
+            ],
+            "rim": {"center_x": 100, "center_y": 82, "half_width": 20, "half_height": 18},
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    saved = tmp_path / "reviews" / f'{data["sheet_id"]}.jpg'
+    assert data["review_path"] == str(saved)
+    assert data["preview_url"] == f'/api/reviews/{data["sheet_id"]}.jpg'
+    assert saved.exists()
+    assert saved.read_bytes().startswith(b"\xff\xd8")
+    preview = client.get(data["preview_url"])
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/jpeg"
 
 
 def test_evaluate_events_endpoint_returns_precision_recall_f1():

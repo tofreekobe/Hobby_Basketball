@@ -23,8 +23,16 @@ from hobby_basketball.evaluation import (
 )
 from hobby_basketball.ffmpeg_export import export_reel
 from hobby_basketball.models import ClipInterval, MadeShotEvent
+from hobby_basketball.review_sheet import build_candidate_review_sheet
 from hobby_basketball.trajectory import RimCalibration
-from hobby_basketball.workspace import EVALUATION_DIR, EXPORT_DIR, export_path, normalize_output_format, save_upload
+from hobby_basketball.workspace import (
+    EVALUATION_DIR,
+    EXPORT_DIR,
+    REVIEW_DIR,
+    export_path,
+    normalize_output_format,
+    save_upload,
+)
 
 
 class PlanClipsRequest(BaseModel):
@@ -105,6 +113,18 @@ class SaveEvaluationRunResponse(BaseModel):
     run_id: str
     evaluation_path: str
     report: ConfidenceThresholdReport
+
+
+class CandidateReviewSheetRequest(BaseModel):
+    video_id: str
+    events: list[MadeShotEvent]
+    rim: RimCalibration
+
+
+class CandidateReviewSheetResponse(BaseModel):
+    sheet_id: str
+    review_path: str
+    preview_url: str
 
 
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
@@ -223,6 +243,15 @@ def export_preview(filename: str):
     return FileResponse(path)
 
 
+@app.get("/api/reviews/{filename}")
+def review_preview(filename: str):
+    safe_name = Path(filename).name
+    path = REVIEW_DIR / safe_name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Review sheet not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
 @app.post("/api/process-video", response_model=ProcessVideoResponse)
 def process_video(request: ProcessVideoRequest) -> ProcessVideoResponse:
     detected = detect_video(request)
@@ -258,6 +287,26 @@ def detect_video(request: ProcessVideoRequest) -> DetectVideoResponse:
 
     clips = merge_intervals(build_clip_intervals(events, request.pre_seconds, request.post_seconds))
     return DetectVideoResponse(events=events, clips=clips)
+
+
+@app.post("/api/candidate-review-sheet", response_model=CandidateReviewSheetResponse)
+def candidate_review_sheet(request: CandidateReviewSheetRequest) -> CandidateReviewSheetResponse:
+    if not request.events:
+        raise HTTPException(status_code=422, detail="No candidate events to review")
+    video_path = _get_video_path(request.video_id)
+    sheet_id = uuid.uuid4().hex
+    review_path = REVIEW_DIR / f"{sheet_id}.jpg"
+    try:
+        build_candidate_review_sheet(video_path, request.events, request.rim, review_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return CandidateReviewSheetResponse(
+        sheet_id=sheet_id,
+        review_path=str(review_path),
+        preview_url=f"/api/reviews/{sheet_id}.jpg",
+    )
 
 
 @app.post("/api/export-events", response_model=ProcessVideoResponse)
