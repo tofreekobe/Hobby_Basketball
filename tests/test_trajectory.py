@@ -61,6 +61,36 @@ def test_detects_ball_entering_net_region_without_strict_upper_crossing():
     assert makes[0].notes == "rim-net entry"
 
 
+def test_keeps_earliest_make_when_later_net_activity_is_higher_confidence():
+    rim = RimCalibration(center_x=100, center_y=100, half_width=20, half_height=20)
+    samples = [
+        BallSample(t=1.00, x=96, y=96, confidence=0.55),
+        BallSample(t=1.20, x=98, y=124, confidence=0.55),
+        BallSample(t=2.50, x=104, y=94, confidence=0.65),
+        BallSample(t=2.70, x=106, y=132, confidence=0.65),
+    ]
+
+    makes = detect_made_shots(samples, rim)
+
+    assert len(makes) == 1
+    assert makes[0].t_make == 1.1
+
+
+def test_replaces_early_make_when_later_cluster_candidate_is_much_stronger():
+    rim = RimCalibration(center_x=100, center_y=100, half_width=20, half_height=20)
+    samples = [
+        BallSample(t=1.00, x=96, y=96, confidence=0.35),
+        BallSample(t=1.20, x=98, y=124, confidence=0.35),
+        BallSample(t=2.50, x=104, y=94, confidence=0.8),
+        BallSample(t=2.70, x=106, y=132, confidence=0.8),
+    ]
+
+    makes = detect_made_shots(samples, rim)
+
+    assert len(makes) == 1
+    assert makes[0].t_make == 2.6
+
+
 def test_rejects_net_entry_that_drops_outward_on_same_side_of_rim():
     rim = RimCalibration(center_x=927, center_y=141, half_width=42, half_height=50)
     samples = [

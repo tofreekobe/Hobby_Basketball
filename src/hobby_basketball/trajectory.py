@@ -192,10 +192,11 @@ def _drops_outward_on_same_side(
 
 
 def _dedupe_makes(makes: list[MadeShotEvent], min_spacing_sec: float) -> list[MadeShotEvent]:
+    replacement_confidence_margin = 0.15
     deduped: list[MadeShotEvent] = []
     for make in sorted(makes, key=lambda item: item.t_make):
         if deduped and make.t_make - deduped[-1].t_make < min_spacing_sec:
-            if make.confidence > deduped[-1].confidence:
+            if make.confidence - deduped[-1].confidence >= replacement_confidence_margin:
                 deduped[-1] = make
             continue
         deduped.append(make)
