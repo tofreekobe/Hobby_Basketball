@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import uuid
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from hobby_basketball.clips import build_clip_intervals, merge_intervals
-from hobby_basketball.detector import DEFAULT_MODEL_NAME, DEFAULT_SAMPLE_FPS, scan_video_for_made_shots
+from hobby_basketball.detector import (
+    DEFAULT_MODEL_NAME,
+    DEFAULT_SAMPLE_FPS,
+    inspect_cuda_runtime,
+    scan_video_for_made_shots,
+)
 from hobby_basketball.evaluation import (
     ConfidenceThresholdReport,
     EventEvaluationReport,
@@ -17,7 +24,7 @@ from hobby_basketball.evaluation import (
 from hobby_basketball.ffmpeg_export import export_reel
 from hobby_basketball.models import ClipInterval, MadeShotEvent
 from hobby_basketball.trajectory import RimCalibration
-from hobby_basketball.workspace import EXPORT_DIR, export_path, normalize_output_format, save_upload
+from hobby_basketball.workspace import EVALUATION_DIR, EXPORT_DIR, export_path, normalize_output_format, save_upload
 
 
 class PlanClipsRequest(BaseModel):
@@ -85,6 +92,21 @@ class EvaluateCandidatesRequest(BaseModel):
     target_recall: float = Field(default=0.95, ge=0, le=1)
 
 
+class SaveEvaluationRunRequest(EvaluateCandidatesRequest):
+    video_id: str
+    rim: RimCalibration | None = None
+    sample_fps: float = Field(default=DEFAULT_SAMPLE_FPS, gt=0)
+    confidence: float = Field(default=0.15, ge=0, le=1)
+    device: str = "cpu"
+    model_name: str = DEFAULT_MODEL_NAME
+
+
+class SaveEvaluationRunResponse(BaseModel):
+    run_id: str
+    evaluation_path: str
+    report: ConfidenceThresholdReport
+
+
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
 VIDEO_REGISTRY: dict[str, Path] = {}
 
@@ -92,6 +114,11 @@ VIDEO_REGISTRY: dict[str, Path] = {}
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/device-status")
+def device_status() -> dict[str, object]:
+    return inspect_cuda_runtime()
 
 
 @app.post("/api/plan-clips", response_model=PlanClipsResponse)
@@ -123,6 +150,48 @@ def evaluate_candidates(request: EvaluateCandidatesRequest) -> ConfidenceThresho
         tolerance_sec=request.tolerance_sec,
         target_precision=request.target_precision,
         target_recall=request.target_recall,
+    )
+
+
+@app.post("/api/save-evaluation-run", response_model=SaveEvaluationRunResponse)
+def save_evaluation_run(request: SaveEvaluationRunRequest) -> SaveEvaluationRunResponse:
+    video_path = _get_video_path(request.video_id)
+    report = evaluate_confidence_thresholds(
+        request.events,
+        request.truth_times,
+        tolerance_sec=request.tolerance_sec,
+        target_precision=request.target_precision,
+        target_recall=request.target_recall,
+    )
+    run_id = uuid.uuid4().hex
+    EVALUATION_DIR.mkdir(parents=True, exist_ok=True)
+    evaluation_path = EVALUATION_DIR / f"{run_id}.json"
+    payload = {
+        "run_id": run_id,
+        "video_id": request.video_id,
+        "video_path": str(video_path),
+        "rim": request.rim.model_dump() if request.rim else None,
+        "settings": {
+            "sample_fps": request.sample_fps,
+            "confidence": request.confidence,
+            "device": request.device,
+            "model_name": request.model_name,
+            "tolerance_sec": request.tolerance_sec,
+            "target_precision": request.target_precision,
+            "target_recall": request.target_recall,
+        },
+        "truth_times": [float(value) for value in request.truth_times],
+        "events": [event.model_dump() for event in request.events],
+        "report": report.model_dump(),
+    }
+    evaluation_path.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    return SaveEvaluationRunResponse(
+        run_id=run_id,
+        evaluation_path=str(evaluation_path),
+        report=report,
     )
 
 

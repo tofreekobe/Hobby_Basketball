@@ -209,6 +209,7 @@
             <option value="cuda">CUDA（显卡/驱动/PyTorch 匹配时）</option>
           </select>
           <p class="hint">默认 CPU 可避开 CUDA 显卡兼容问题；CUDA 更快，但只建议在环境匹配时使用。</p>
+          <p class="hint" id="deviceStatus">正在检测 CUDA 兼容性...</p>
           <label>导出格式</label>
           <select id="outputFormat">
             <option value="mp4">MP4</option>
@@ -220,6 +221,7 @@
           <textarea id="truthTimes" rows="3" placeholder="例如：18.4, 44.7, 51.2"></textarea>
           <button id="markTruthBtn" class="secondary" onclick="markCurrentTruthTime()" disabled>添加当前时间为标注</button>
           <button id="evaluateBtn" class="secondary" onclick="evaluateCandidates()" disabled>评估候选准确率</button>
+          <button id="saveEvaluationBtn" class="secondary" onclick="saveEvaluationRun()" disabled>保存评估报告</button>
           <button id="processBtn" onclick="processVideo()" disabled>执行识别并剪辑</button>
         </aside>
 
@@ -265,6 +267,7 @@
     <script>
       let currentVideoId = null;
       let currentEvents = [];
+      let currentEvaluationReport = null;
       let rimDragStart = null;
       let suppressNextRimClickUntil = 0;
 
@@ -278,6 +281,22 @@
         const response = await fetch("/api/health");
         const data = await response.json();
         document.getElementById("health").textContent = data.status === "ok" ? "后端已连接" : "后端异常";
+      }
+
+      async function refreshDeviceStatus() {
+        const response = await fetch("/api/device-status");
+        const data = await response.json();
+        const status = document.getElementById("deviceStatus");
+        const device = document.getElementById("device");
+        status.textContent = data.message || "设备状态未知，默认使用 CPU。";
+        if (data.default_device === "cpu") {
+          device.value = "cpu";
+        }
+        for (const option of device.options) {
+          if (["cuda", "auto"].includes(option.value)) {
+            option.disabled = data.cuda_available && data.cuda_supported ? false : true;
+          }
+        }
       }
 
       async function uploadVideo() {
@@ -300,11 +319,13 @@
           }
           currentVideoId = data.video_id;
           currentEvents = [];
+          currentEvaluationReport = null;
           document.getElementById("sourcePreview").src = data.preview_url;
           document.getElementById("processBtn").disabled = false;
           document.getElementById("detectBtn").disabled = false;
           document.getElementById("exportSelectedBtn").disabled = true;
           document.getElementById("evaluateBtn").disabled = true;
+          document.getElementById("saveEvaluationBtn").disabled = true;
           document.getElementById("markTruthBtn").disabled = false;
           renderCandidateList([]);
           document.getElementById("uploadStatus").textContent = `已上传：${data.filename}`;
@@ -462,9 +483,11 @@
             return;
           }
           currentEvents = data.events.map((event) => ({...event, kept: event.kept !== false}));
+          currentEvaluationReport = null;
           renderCandidateList(currentEvents);
           document.getElementById("exportSelectedBtn").disabled = currentEvents.length === 0;
           document.getElementById("evaluateBtn").disabled = currentEvents.length === 0;
+          document.getElementById("saveEvaluationBtn").disabled = true;
           setOutput(data);
         } catch (error) {
           setOutput(`识别候选失败：${error}`, true);
@@ -610,7 +633,9 @@
         });
         const data = await response.json();
         if (response.ok) {
+          currentEvaluationReport = data;
           applyRecommendedThreshold(data);
+          document.getElementById("saveEvaluationBtn").disabled = false;
         }
         setOutput(data, !response.ok);
       }
@@ -627,6 +652,38 @@
         }));
         renderCandidateList(currentEvents);
         document.getElementById("exportSelectedBtn").disabled = selectedEvents().length === 0;
+      }
+
+      async function saveEvaluationRun() {
+        const truthTimes = parseTruthTimes();
+        if (!currentEvaluationReport || !truthTimes.length || !currentVideoId) {
+          setOutput("请先完成候选评估再保存报告。", true);
+          return;
+        }
+        const response = await fetch("/api/save-evaluation-run", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            video_id: currentVideoId,
+            events: currentEvents,
+            truth_times: truthTimes,
+            tolerance_sec: 1.0,
+            target_precision: 0.95,
+            target_recall: 0.95,
+            rim: {
+              center_x: Number(document.getElementById("rimX").value),
+              center_y: Number(document.getElementById("rimY").value),
+              half_width: Number(document.getElementById("rimHalfWidth").value),
+              half_height: Number(document.getElementById("rimHalfHeight").value)
+            },
+            sample_fps: Number(document.getElementById("sampleFps").value),
+            confidence: Number(document.getElementById("confidence").value),
+            device: document.getElementById("device").value,
+            model_name: "none"
+          })
+        });
+        const data = await response.json();
+        setOutput(data, !response.ok);
       }
 
       async function processVideo() {
@@ -676,6 +733,9 @@
 
       refreshHealth().catch(() => {
         document.getElementById("health").textContent = "后端未连接";
+      });
+      refreshDeviceStatus().catch(() => {
+        document.getElementById("deviceStatus").textContent = "无法检测 CUDA 状态，默认使用 CPU。";
       });
     </script>
   </body>

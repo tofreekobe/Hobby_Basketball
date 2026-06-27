@@ -3,6 +3,7 @@ import pytest
 from hobby_basketball.detector import (
     _PredictionDeviceState,
     _best_color_ball_sample,
+    inspect_cuda_runtime,
     _is_cuda_kernel_error,
     _predict_with_cuda_fallback,
     _predict_with_device_fallback,
@@ -51,6 +52,16 @@ def test_cuda_fallback_is_sticky_for_remaining_predictions():
 def test_unsupported_cuda_arch_resolves_to_cpu_before_prediction():
     assert _resolve_device_arg("cuda", torch_module=FakeUnsupportedTorch) == "cpu"
     assert _resolve_device_arg("auto", torch_module=FakeUnsupportedTorch) == "cpu"
+
+
+def test_cuda_runtime_status_reports_unsupported_arch():
+    status = inspect_cuda_runtime(torch_module=FakeUnsupportedTorch)
+
+    assert status["cuda_available"] is True
+    assert status["current_arch"] == "sm_120"
+    assert status["cuda_supported"] is False
+    assert status["default_device"] == "cpu"
+    assert "sm_120" in status["message"]
 
 
 def test_color_ball_sample_prefers_moving_orange_blob_near_rim():

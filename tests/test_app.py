@@ -47,6 +47,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert "startRimDrag" in html
     assert 'id="detectBtn"' in html
     assert 'id="exportSelectedBtn"' in html
+    assert 'id="saveEvaluationBtn"' in html
     assert 'id="candidateList"' in html
     assert 'id="truthTimes"' in html
     assert "seekCandidate" in html
@@ -54,6 +55,9 @@ def test_index_contains_file_picker_and_export_controls():
     assert "/api/evaluate-candidates" in html
     assert "target_precision" in html
     assert "applyRecommendedThreshold" in html
+    assert "/api/save-evaluation-run" in html
+    assert "/api/device-status" in html
+    assert "refreshDeviceStatus" in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
 
@@ -71,6 +75,30 @@ def test_upload_video_saves_file_and_returns_preview_url():
     assert data["video_id"]
     assert data["filename"] == "game.mp4"
     assert data["preview_url"].startswith("/api/videos/")
+
+
+def test_device_status_endpoint_reports_runtime(monkeypatch):
+    client = TestClient(app)
+
+    def fake_status():
+        return {
+            "cuda_available": True,
+            "current_arch": "sm_120",
+            "supported_arches": ["sm_50", "sm_90"],
+            "cuda_supported": False,
+            "default_device": "cpu",
+            "message": "CUDA is not compatible with sm_120; using CPU.",
+        }
+
+    monkeypatch.setattr("hobby_basketball.app.inspect_cuda_runtime", fake_status)
+
+    response = client.get("/api/device-status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["current_arch"] == "sm_120"
+    assert data["cuda_supported"] is False
+    assert data["default_device"] == "cpu"
 
 
 def test_process_video_runs_detection_and_export(monkeypatch):
@@ -244,3 +272,43 @@ def test_evaluate_candidates_endpoint_recommends_confidence_threshold():
     assert data["recommended_threshold"] == 0.84
     assert data["recommended"]["precision"] == 1.0
     assert data["recommended"]["recall"] == 1.0
+
+
+def test_save_evaluation_run_persists_report_for_uploaded_video(tmp_path, monkeypatch):
+    monkeypatch.setattr("hobby_basketball.workspace.WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setattr("hobby_basketball.workspace.UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr("hobby_basketball.workspace.EXPORT_DIR", tmp_path / "exports")
+    monkeypatch.setattr("hobby_basketball.app.EVALUATION_DIR", tmp_path / "evaluations")
+    client = TestClient(app)
+    upload = client.post(
+        "/api/upload-video",
+        files={"file": ("game.mp4", b"fake-video-bytes", "video/mp4")},
+    ).json()
+
+    response = client.post(
+        "/api/save-evaluation-run",
+        json={
+            "video_id": upload["video_id"],
+            "events": [
+                {"id": "make-1", "video_path": "", "t_make": 10.0, "confidence": 0.92},
+                {"id": "make-2", "video_path": "", "t_make": 20.0, "confidence": 0.84},
+            ],
+            "truth_times": [10.2, 20.1],
+            "rim": {"center_x": 100, "center_y": 100, "half_width": 20, "half_height": 10},
+            "sample_fps": 12.0,
+            "confidence": 0.15,
+            "model_name": "none",
+            "device": "cpu",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["report"]["target_met"] is True
+    saved_path = data["evaluation_path"]
+    saved = tmp_path / "evaluations" / f"{data['run_id']}.json"
+    assert saved_path == str(saved)
+    assert saved.exists()
+    content = saved.read_text(encoding="utf-8")
+    assert '"truth_times":[10.2,20.1]' in content
+    assert '"recommended_threshold":0.84' in content

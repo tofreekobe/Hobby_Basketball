@@ -163,6 +163,65 @@ def _resolve_device_arg(device: str, *, torch_module=None):
     return device_arg
 
 
+def inspect_cuda_runtime(torch_module=None) -> dict[str, object]:
+    try:
+        if torch_module is None:
+            import torch as torch_module
+    except Exception:
+        return {
+            "cuda_available": False,
+            "current_arch": None,
+            "supported_arches": [],
+            "cuda_supported": False,
+            "default_device": "cpu",
+            "message": "PyTorch is not available; using CPU.",
+        }
+
+    try:
+        cuda = torch_module.cuda
+        if not cuda.is_available():
+            return {
+                "cuda_available": False,
+                "current_arch": None,
+                "supported_arches": list(cuda.get_arch_list() or []),
+                "cuda_supported": False,
+                "default_device": "cpu",
+                "message": "CUDA is not available; using CPU.",
+            }
+
+        supported_arches = list(cuda.get_arch_list() or [])
+        major, minor = cuda.get_device_capability(0)
+        current_arch = f"sm_{major}{minor}"
+        cuda_supported = not supported_arches or current_arch in set(supported_arches)
+        if cuda_supported:
+            message = f"CUDA is available and supports {current_arch}."
+            default_device = "cuda"
+        else:
+            supported = ", ".join(supported_arches) or "unknown architectures"
+            message = (
+                f"CUDA is available, but this PyTorch build does not support "
+                f"{current_arch} (supports {supported}); using CPU."
+            )
+            default_device = "cpu"
+        return {
+            "cuda_available": True,
+            "current_arch": current_arch,
+            "supported_arches": supported_arches,
+            "cuda_supported": cuda_supported,
+            "default_device": default_device,
+            "message": message,
+        }
+    except Exception as exc:
+        return {
+            "cuda_available": False,
+            "current_arch": None,
+            "supported_arches": [],
+            "cuda_supported": False,
+            "default_device": "cpu",
+            "message": f"Could not inspect CUDA runtime; using CPU. {exc}",
+        }
+
+
 def _torch_cuda_arch_is_unsupported(torch_module=None) -> bool:
     try:
         if torch_module is None:

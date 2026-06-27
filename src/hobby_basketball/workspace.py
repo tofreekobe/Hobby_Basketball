@@ -10,6 +10,7 @@ from fastapi import UploadFile
 WORKSPACE_ROOT = Path(os.getenv("HOBBY_BASKETBALL_WORKSPACE", Path.cwd() / "workspace"))
 UPLOAD_DIR = WORKSPACE_ROOT / "uploads"
 EXPORT_DIR = WORKSPACE_ROOT / "exports"
+EVALUATION_DIR = WORKSPACE_ROOT / "evaluations"
 
 
 def save_upload(file: UploadFile) -> tuple[str, Path]:
