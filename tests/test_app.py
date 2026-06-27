@@ -722,6 +722,68 @@ def test_evaluation_summary_aggregates_saved_runs(tmp_path, monkeypatch):
     assert data["run_ids"] == ["run-1", "run-2"]
 
 
+def test_evaluation_summary_reports_candidate_review_label_coverage(tmp_path, monkeypatch):
+    evaluation_dir = tmp_path / "evaluations"
+    review_dir = tmp_path / "reviews"
+    evaluation_dir.mkdir()
+    review_dir.mkdir()
+    video_path = tmp_path / "game.mp4"
+    video_path.write_bytes(b"fake-video")
+    monkeypatch.setattr("hobby_basketball.app.EVALUATION_DIR", evaluation_dir)
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", review_dir)
+    (evaluation_dir / "run-1.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "truth_times": [10.0, 20.0],
+                "settings": {"tolerance_sec": 1.0},
+                "report": {
+                    "target_precision": 0.95,
+                    "target_recall": 0.95,
+                    "target_met": True,
+                    "recommended": {
+                        "predicted_count": 2,
+                        "true_positives": 2,
+                        "false_positives": 0,
+                        "false_negatives": 0,
+                        "precision": 1.0,
+                        "recall": 1.0,
+                        "f1": 1.0,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (review_dir / "review-1.json").write_text(
+        json.dumps(
+            {
+                "review_id": "review-1",
+                "video_id": "video-1",
+                "rim": {"center_x": 100, "center_y": 80, "half_width": 42, "half_height": 50},
+                "events": [
+                    {"id": "accepted-extra", "video_path": str(video_path), "t_make": 30.0, "confidence": 0.9, "kept": True},
+                    {"id": "rejected-conflict", "video_path": str(video_path), "t_make": 20.1, "confidence": 0.8, "kept": False},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/evaluation-summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["review_count"] == 1
+    assert data["reviewed_candidate_count"] == 2
+    assert data["accepted_review_count"] == 1
+    assert data["rejected_review_count"] == 1
+    assert data["supplemental_accepted_review_count"] == 1
+    assert data["truth_rejected_conflict_count"] == 1
+    assert data["candidate_review_precision"] == 0.5
+
+
 def test_evaluation_summary_counts_empty_recommendations_as_misses(tmp_path, monkeypatch):
     evaluation_dir = tmp_path / "evaluations"
     evaluation_dir.mkdir()

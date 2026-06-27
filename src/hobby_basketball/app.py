@@ -209,6 +209,13 @@ class EvaluationDatasetSummary(BaseModel):
     macro_recall: float = Field(ge=0, le=1)
     macro_f1: float = Field(ge=0, le=1)
     run_ids: list[str]
+    review_count: int = Field(default=0, ge=0)
+    reviewed_candidate_count: int = Field(default=0, ge=0)
+    accepted_review_count: int = Field(default=0, ge=0)
+    rejected_review_count: int = Field(default=0, ge=0)
+    supplemental_accepted_review_count: int = Field(default=0, ge=0)
+    truth_rejected_conflict_count: int = Field(default=0, ge=0)
+    candidate_review_precision: float = Field(default=0.0, ge=0, le=1)
 
 
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
@@ -305,6 +312,8 @@ def evaluation_summary() -> EvaluationDatasetSummary:
     target_precision = runs[0]["target_precision"] if runs else 0.95
     target_recall = runs[0]["target_recall"] if runs else 0.95
     totals = EvaluationTotals()
+    truth_times: list[float] = []
+    tolerance_sec = 1.0
 
     for run in runs:
         point = run["point"]
@@ -312,6 +321,8 @@ def evaluation_summary() -> EvaluationDatasetSummary:
         totals.true_positives += point.true_positives
         totals.false_positives += point.false_positives
         totals.false_negatives += point.false_negatives
+        truth_times.extend(run["truth_times"])
+        tolerance_sec = float(run["tolerance_sec"])
 
     micro_precision = _safe_ratio(totals.true_positives, totals.true_positives + totals.false_positives)
     micro_recall = _safe_ratio(totals.true_positives, totals.true_positives + totals.false_negatives)
@@ -319,6 +330,11 @@ def evaluation_summary() -> EvaluationDatasetSummary:
     macro_precision = _average_metric([run["point"].precision for run in runs])
     macro_recall = _average_metric([run["point"].recall for run in runs])
     macro_f1 = _average_metric([run["point"].f1 for run in runs])
+    review_label_summary = _candidate_review_label_summary(
+        _load_candidate_reviews(),
+        truth_times,
+        tolerance_sec=tolerance_sec,
+    )
 
     return EvaluationDatasetSummary(
         run_count=len(runs),
@@ -336,6 +352,7 @@ def evaluation_summary() -> EvaluationDatasetSummary:
         macro_recall=macro_recall,
         macro_f1=macro_f1,
         run_ids=[run["run_id"] for run in runs],
+        **review_label_summary,
     )
 
 
@@ -680,6 +697,38 @@ def _load_candidate_reviews() -> list[dict[str, object]]:
     return reviews
 
 
+def _candidate_review_label_summary(
+    reviews: list[dict[str, object]],
+    truth_times: list[float],
+    *,
+    tolerance_sec: float,
+) -> dict[str, int | float]:
+    accepted_times: list[float] = []
+    rejected_times: list[float] = []
+    for review in reviews:
+        for event in _review_events(review):
+            if event.kept:
+                accepted_times.append(event.t_make)
+            else:
+                rejected_times.append(event.t_make)
+
+    accepted_count = len(accepted_times)
+    rejected_count = len(rejected_times)
+    return {
+        "review_count": len(reviews),
+        "reviewed_candidate_count": accepted_count + rejected_count,
+        "accepted_review_count": accepted_count,
+        "rejected_review_count": rejected_count,
+        "supplemental_accepted_review_count": sum(
+            1 for time in accepted_times if not _time_matches_any(time, truth_times, tolerance_sec)
+        ),
+        "truth_rejected_conflict_count": sum(
+            1 for time in rejected_times if _time_matches_any(time, truth_times, tolerance_sec)
+        ),
+        "candidate_review_precision": _round_metric(_safe_ratio(accepted_count, accepted_count + rejected_count)),
+    }
+
+
 ReviewGroupKey = tuple[str, float, float, float, float]
 
 
@@ -894,6 +943,8 @@ def _evaluation_run_from_payload(path: Path, payload: object) -> dict[str, objec
         "target_met": bool(report.get("target_met")),
         "target_precision": target_precision,
         "target_recall": target_recall,
+        "truth_times": _truth_times(payload),
+        "tolerance_sec": _float_value(_setting_value(payload, "tolerance_sec", 1.0), 1.0),
         "point": point,
     }
 
@@ -906,16 +957,24 @@ def _setting_value(payload: dict[str, object], name: str, default: float) -> obj
 
 
 def _truth_time_count(payload: dict[str, object]) -> int:
+    return len(_truth_times(payload))
+
+
+def _truth_times(payload: dict[str, object]) -> list[float]:
     truth_times = payload.get("truth_times")
     if not isinstance(truth_times, list):
-        return 0
-    return len([value for value in truth_times if isinstance(value, (int, float))])
+        return []
+    return [float(value) for value in truth_times if isinstance(value, (int, float))]
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float:
     if denominator == 0:
         return 0.0
     return numerator / denominator
+
+
+def _time_matches_any(time: float, candidates: list[float], tolerance_sec: float) -> bool:
+    return any(abs(time - candidate) <= tolerance_sec for candidate in candidates)
 
 
 def _average_metric(values: list[float]) -> float:
