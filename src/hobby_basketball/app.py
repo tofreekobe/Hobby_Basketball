@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
@@ -147,6 +148,39 @@ class SaveCandidateReviewResponse(BaseModel):
     summary: CandidateReviewSummary
 
 
+class EvaluationTotals(BaseModel):
+    predicted_count: int = Field(default=0, ge=0)
+    true_positives: int = Field(default=0, ge=0)
+    false_positives: int = Field(default=0, ge=0)
+    false_negatives: int = Field(default=0, ge=0)
+
+
+class EvaluationRunPoint(BaseModel):
+    predicted_count: int = Field(default=0, ge=0)
+    true_positives: int = Field(default=0, ge=0)
+    false_positives: int = Field(default=0, ge=0)
+    false_negatives: int = Field(default=0, ge=0)
+    precision: float = Field(default=0.0, ge=0, le=1)
+    recall: float = Field(default=0.0, ge=0, le=1)
+    f1: float = Field(default=0.0, ge=0, le=1)
+
+
+class EvaluationDatasetSummary(BaseModel):
+    run_count: int = Field(ge=0)
+    target_met_count: int = Field(ge=0)
+    target_precision: float = Field(ge=0, le=1)
+    target_recall: float = Field(ge=0, le=1)
+    target_met: bool
+    totals: EvaluationTotals
+    micro_precision: float = Field(ge=0, le=1)
+    micro_recall: float = Field(ge=0, le=1)
+    micro_f1: float = Field(ge=0, le=1)
+    macro_precision: float = Field(ge=0, le=1)
+    macro_recall: float = Field(ge=0, le=1)
+    macro_f1: float = Field(ge=0, le=1)
+    run_ids: list[str]
+
+
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
 VIDEO_REGISTRY: dict[str, Path] = {}
 
@@ -232,6 +266,46 @@ def save_evaluation_run(request: SaveEvaluationRunRequest) -> SaveEvaluationRunR
         run_id=run_id,
         evaluation_path=str(evaluation_path),
         report=report,
+    )
+
+
+@app.get("/api/evaluation-summary", response_model=EvaluationDatasetSummary)
+def evaluation_summary() -> EvaluationDatasetSummary:
+    runs = _load_evaluation_runs()
+    target_precision = runs[0]["target_precision"] if runs else 0.95
+    target_recall = runs[0]["target_recall"] if runs else 0.95
+    totals = EvaluationTotals()
+
+    for run in runs:
+        point = run["point"]
+        totals.predicted_count += point.predicted_count
+        totals.true_positives += point.true_positives
+        totals.false_positives += point.false_positives
+        totals.false_negatives += point.false_negatives
+
+    micro_precision = _safe_ratio(totals.true_positives, totals.true_positives + totals.false_positives)
+    micro_recall = _safe_ratio(totals.true_positives, totals.true_positives + totals.false_negatives)
+    micro_f1 = _safe_ratio(2 * micro_precision * micro_recall, micro_precision + micro_recall)
+    macro_precision = _average_metric([run["point"].precision for run in runs])
+    macro_recall = _average_metric([run["point"].recall for run in runs])
+    macro_f1 = _average_metric([run["point"].f1 for run in runs])
+
+    return EvaluationDatasetSummary(
+        run_count=len(runs),
+        target_met_count=sum(1 for run in runs if run["target_met"]),
+        target_precision=target_precision,
+        target_recall=target_recall,
+        target_met=bool(runs)
+        and micro_precision >= target_precision
+        and micro_recall >= target_recall,
+        totals=totals,
+        micro_precision=_round_metric(micro_precision),
+        micro_recall=_round_metric(micro_recall),
+        micro_f1=_round_metric(micro_f1),
+        macro_precision=macro_precision,
+        macro_recall=macro_recall,
+        macro_f1=macro_f1,
+        run_ids=[run["run_id"] for run in runs],
     )
 
 
@@ -409,3 +483,104 @@ def _get_video_path(video_id: str) -> Path:
     if path is None or not path.exists():
         raise HTTPException(status_code=404, detail="视频不存在，请重新选择文件")
     return path
+
+
+def _load_evaluation_runs() -> list[dict[str, object]]:
+    if not EVALUATION_DIR.exists():
+        return []
+
+    runs: list[dict[str, object]] = []
+    for path in sorted(EVALUATION_DIR.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        run = _evaluation_run_from_payload(path, payload)
+        if run is not None:
+            runs.append(run)
+    return runs
+
+
+def _evaluation_run_from_payload(path: Path, payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    report = payload.get("report")
+    if not isinstance(report, dict):
+        return None
+
+    target_precision = _float_value(
+        report.get("target_precision", _setting_value(payload, "target_precision", 0.95)),
+        0.95,
+    )
+    target_recall = _float_value(
+        report.get("target_recall", _setting_value(payload, "target_recall", 0.95)),
+        0.95,
+    )
+    recommended = report.get("recommended")
+    if isinstance(recommended, dict):
+        point = EvaluationRunPoint(
+            predicted_count=_int_value(recommended.get("predicted_count"), 0),
+            true_positives=_int_value(recommended.get("true_positives"), 0),
+            false_positives=_int_value(recommended.get("false_positives"), 0),
+            false_negatives=_int_value(recommended.get("false_negatives"), 0),
+            precision=_float_value(recommended.get("precision"), 0.0),
+            recall=_float_value(recommended.get("recall"), 0.0),
+            f1=_float_value(recommended.get("f1"), 0.0),
+        )
+    elif recommended is None:
+        point = EvaluationRunPoint(false_negatives=_truth_time_count(payload))
+    else:
+        return None
+
+    return {
+        "run_id": str(payload.get("run_id") or path.stem),
+        "target_met": bool(report.get("target_met")),
+        "target_precision": target_precision,
+        "target_recall": target_recall,
+        "point": point,
+    }
+
+
+def _setting_value(payload: dict[str, object], name: str, default: float) -> object:
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        return default
+    return settings.get(name, default)
+
+
+def _truth_time_count(payload: dict[str, object]) -> int:
+    truth_times = payload.get("truth_times")
+    if not isinstance(truth_times, list):
+        return 0
+    return len([value for value in truth_times if isinstance(value, (int, float))])
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if denominator == 0:
+        return 0.0
+    return numerator / denominator
+
+
+def _average_metric(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return _round_metric(sum(values) / len(values))
+
+
+def _round_metric(value: float) -> float:
+    decimal_value = Decimal(str(value)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+    return float(decimal_value)
+
+
+def _float_value(value: object, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_value(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

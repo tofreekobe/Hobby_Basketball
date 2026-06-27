@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -64,6 +66,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert "target_precision" in html
     assert "applyRecommendedThreshold" in html
     assert "/api/save-evaluation-run" in html
+    assert "/api/evaluation-summary" in html
+    assert 'id="evaluationSummaryBtn"' in html
     assert "/api/candidate-review-sheet" in html
     assert "/api/save-candidate-review" in html
     assert "/api/device-status" in html
@@ -404,3 +408,121 @@ def test_save_evaluation_run_persists_report_for_uploaded_video(tmp_path, monkey
     content = saved.read_text(encoding="utf-8")
     assert '"truth_times":[10.2,20.1]' in content
     assert '"recommended_threshold":0.84' in content
+
+
+def test_evaluation_summary_aggregates_saved_runs(tmp_path, monkeypatch):
+    evaluation_dir = tmp_path / "evaluations"
+    evaluation_dir.mkdir()
+    monkeypatch.setattr("hobby_basketball.app.EVALUATION_DIR", evaluation_dir)
+    (evaluation_dir / "run-1.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "report": {
+                    "target_precision": 0.95,
+                    "target_recall": 0.95,
+                    "target_met": True,
+                    "recommended": {
+                        "predicted_count": 2,
+                        "true_positives": 2,
+                        "false_positives": 0,
+                        "false_negatives": 0,
+                        "precision": 1.0,
+                        "recall": 1.0,
+                        "f1": 1.0,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evaluation_dir / "run-2.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-2",
+                "report": {
+                    "target_precision": 0.95,
+                    "target_recall": 0.95,
+                    "target_met": False,
+                    "recommended": {
+                        "predicted_count": 3,
+                        "true_positives": 2,
+                        "false_positives": 1,
+                        "false_negatives": 1,
+                        "precision": 0.666667,
+                        "recall": 0.666667,
+                        "f1": 0.666667,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/evaluation-summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_count"] == 2
+    assert data["target_met_count"] == 1
+    assert data["target_precision"] == 0.95
+    assert data["target_recall"] == 0.95
+    assert data["target_met"] is False
+    assert data["totals"] == {
+        "predicted_count": 5,
+        "true_positives": 4,
+        "false_positives": 1,
+        "false_negatives": 1,
+    }
+    assert data["micro_precision"] == 0.8
+    assert data["micro_recall"] == 0.8
+    assert data["micro_f1"] == 0.8
+    assert data["macro_precision"] == 0.833334
+    assert data["macro_recall"] == 0.833334
+    assert data["macro_f1"] == 0.833334
+    assert data["run_ids"] == ["run-1", "run-2"]
+
+
+def test_evaluation_summary_counts_empty_recommendations_as_misses(tmp_path, monkeypatch):
+    evaluation_dir = tmp_path / "evaluations"
+    evaluation_dir.mkdir()
+    monkeypatch.setattr("hobby_basketball.app.EVALUATION_DIR", evaluation_dir)
+    (evaluation_dir / "empty.json").write_text(
+        json.dumps(
+            {
+                "run_id": "empty",
+                "truth_times": [12.0, 20.0],
+                "report": {
+                    "target_precision": 0.95,
+                    "target_recall": 0.95,
+                    "target_met": False,
+                    "recommended": None,
+                    "points": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/evaluation-summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_count"] == 1
+    assert data["target_met_count"] == 0
+    assert data["target_met"] is False
+    assert data["totals"] == {
+        "predicted_count": 0,
+        "true_positives": 0,
+        "false_positives": 0,
+        "false_negatives": 2,
+    }
+    assert data["micro_precision"] == 0.0
+    assert data["micro_recall"] == 0.0
+    assert data["micro_f1"] == 0.0
+    assert data["macro_precision"] == 0.0
+    assert data["macro_recall"] == 0.0
+    assert data["macro_f1"] == 0.0
+    assert data["run_ids"] == ["empty"]

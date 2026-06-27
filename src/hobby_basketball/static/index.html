@@ -225,6 +225,7 @@
           <button id="markTruthBtn" class="secondary" onclick="markCurrentTruthTime()" disabled>添加当前时间为标注</button>
           <button id="evaluateBtn" class="secondary" onclick="evaluateCandidates()" disabled>评估候选准确率</button>
           <button id="saveEvaluationBtn" class="secondary" onclick="saveEvaluationRun()" disabled>保存评估报告</button>
+          <button id="evaluationSummaryBtn" class="secondary" onclick="loadEvaluationSummary()">汇总评估数据集</button>
           <button id="processBtn" onclick="processVideo()" disabled>执行识别并剪辑</button>
         </aside>
 
@@ -788,6 +789,12 @@
             model_name: "none"
           })
         });
+        const data = await response.json();
+        setOutput(data, !response.ok);
+      }
+
+      async function loadEvaluationSummary() {
+        const response = await fetch("/api/evaluation-summary");
         const data = await response.json();
         setOutput(data, !response.ok);
       }
