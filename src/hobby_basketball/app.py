@@ -148,6 +148,28 @@ class SaveCandidateReviewResponse(BaseModel):
     summary: CandidateReviewSummary
 
 
+class ReviewRegressionSummary(BaseModel):
+    review_count: int = Field(ge=0)
+    skipped_review_count: int = Field(ge=0)
+    reviewed_candidate_count: int = Field(ge=0)
+    accepted_label_count: int = Field(ge=0)
+    rejected_label_count: int = Field(ge=0)
+    accepted_preserved_count: int = Field(ge=0)
+    missed_accepted_count: int = Field(ge=0)
+    false_positive_recurrences: int = Field(ge=0)
+    rejected_suppressed_count: int = Field(ge=0)
+    unreviewed_prediction_count: int = Field(ge=0)
+    reviewed_precision: float = Field(ge=0, le=1)
+    accepted_recall: float = Field(ge=0, le=1)
+    rejected_suppression_rate: float = Field(ge=0, le=1)
+    target_precision: float = Field(ge=0, le=1)
+    target_recall: float = Field(ge=0, le=1)
+    target_met: bool
+    metrics_scope: str
+    evaluated_review_ids: list[str]
+    skipped_review_ids: list[str]
+
+
 class EvaluationTotals(BaseModel):
     predicted_count: int = Field(default=0, ge=0)
     true_positives: int = Field(default=0, ge=0)
@@ -441,6 +463,108 @@ def save_candidate_review(request: SaveCandidateReviewRequest) -> SaveCandidateR
     )
 
 
+@app.get("/api/review-regression-summary", response_model=ReviewRegressionSummary)
+def review_regression_summary(
+    sample_fps: float = DEFAULT_SAMPLE_FPS,
+    confidence: float = 0.15,
+    device: str = "cpu",
+    model_name: str = DEFAULT_MODEL_NAME,
+    tolerance_sec: float = 1.0,
+    target_precision: float = 0.95,
+    target_recall: float = 0.95,
+) -> ReviewRegressionSummary:
+    reviews = _load_candidate_reviews()
+    accepted_label_count = 0
+    rejected_label_count = 0
+    accepted_preserved_count = 0
+    false_positive_recurrences = 0
+    unreviewed_prediction_count = 0
+    evaluated_review_ids: list[str] = []
+    skipped_review_ids: list[str] = []
+
+    for review in reviews:
+        review_id = str(review.get("review_id") or "")
+        video_path = _review_video_path(review)
+        rim = _review_rim(review)
+        events = _review_events(review)
+        if video_path is None or rim is None or not events:
+            skipped_review_ids.append(review_id)
+            continue
+
+        accepted_times = [event.t_make for event in events if event.kept]
+        rejected_times = [event.t_make for event in events if not event.kept]
+        try:
+            predictions = scan_video_for_made_shots(
+                video_path,
+                rim,
+                sample_fps=sample_fps,
+                confidence=confidence,
+                model_name=model_name,
+                device=device,
+            )
+        except Exception:
+            skipped_review_ids.append(review_id)
+            continue
+
+        predicted_times = [event.t_make for event in predictions]
+        accepted_report = evaluate_event_times(
+            predicted_times,
+            accepted_times,
+            tolerance_sec=tolerance_sec,
+        )
+        rejected_report = evaluate_event_times(
+            predicted_times,
+            rejected_times,
+            tolerance_sec=tolerance_sec,
+        )
+        reviewed_report = evaluate_event_times(
+            predicted_times,
+            accepted_times + rejected_times,
+            tolerance_sec=tolerance_sec,
+        )
+
+        accepted_label_count += len(accepted_times)
+        rejected_label_count += len(rejected_times)
+        accepted_preserved_count += accepted_report.true_positives
+        false_positive_recurrences += rejected_report.true_positives
+        unreviewed_prediction_count += len(reviewed_report.unmatched_predictions)
+        evaluated_review_ids.append(review_id)
+
+    missed_accepted_count = accepted_label_count - accepted_preserved_count
+    rejected_suppressed_count = rejected_label_count - false_positive_recurrences
+    reviewed_precision = _safe_ratio(
+        accepted_preserved_count,
+        accepted_preserved_count + false_positive_recurrences,
+    )
+    accepted_recall = _safe_ratio(accepted_preserved_count, accepted_label_count)
+    rejected_suppression_rate = _safe_ratio(rejected_suppressed_count, rejected_label_count)
+
+    return ReviewRegressionSummary(
+        review_count=len(reviews),
+        skipped_review_count=len(skipped_review_ids),
+        reviewed_candidate_count=accepted_label_count + rejected_label_count,
+        accepted_label_count=accepted_label_count,
+        rejected_label_count=rejected_label_count,
+        accepted_preserved_count=accepted_preserved_count,
+        missed_accepted_count=missed_accepted_count,
+        false_positive_recurrences=false_positive_recurrences,
+        rejected_suppressed_count=rejected_suppressed_count,
+        unreviewed_prediction_count=unreviewed_prediction_count,
+        reviewed_precision=_round_metric(reviewed_precision),
+        accepted_recall=_round_metric(accepted_recall),
+        rejected_suppression_rate=_round_metric(rejected_suppression_rate),
+        target_precision=target_precision,
+        target_recall=target_recall,
+        target_met=bool(evaluated_review_ids)
+        and reviewed_precision >= target_precision
+        and accepted_recall >= target_recall
+        and false_positive_recurrences == 0,
+        metrics_scope="reviewed_candidate_labels_only",
+        evaluated_review_ids=evaluated_review_ids,
+        skipped_review_ids=skipped_review_ids,
+    )
+
+
 @app.post("/api/export-events", response_model=ProcessVideoResponse)
 def export_events(request: ExportEventsRequest) -> ProcessVideoResponse:
     video_path = _get_video_path(request.video_id)
@@ -499,6 +623,59 @@ def _load_evaluation_runs() -> list[dict[str, object]]:
         if run is not None:
             runs.append(run)
     return runs
+
+
+def _load_candidate_reviews() -> list[dict[str, object]]:
+    if not REVIEW_DIR.exists():
+        return []
+
+    reviews: list[dict[str, object]] = []
+    for path in sorted(REVIEW_DIR.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            reviews.append(payload)
+    return reviews
+
+
+def _review_video_path(review: dict[str, object]) -> Path | None:
+    for event in _review_event_dicts(review):
+        value = event.get("video_path")
+        if not isinstance(value, str) or not value:
+            continue
+        path = Path(value)
+        if path.exists():
+            return path
+    return None
+
+
+def _review_rim(review: dict[str, object]) -> RimCalibration | None:
+    rim = review.get("rim")
+    if not isinstance(rim, dict):
+        return None
+    try:
+        return RimCalibration.model_validate(rim)
+    except ValueError:
+        return None
+
+
+def _review_events(review: dict[str, object]) -> list[MadeShotEvent]:
+    events: list[MadeShotEvent] = []
+    for event in _review_event_dicts(review):
+        try:
+            events.append(MadeShotEvent.model_validate(event))
+        except ValueError:
+            continue
+    return events
+
+
+def _review_event_dicts(review: dict[str, object]) -> list[dict[str, object]]:
+    events = review.get("events")
+    if not isinstance(events, list):
+        return []
+    return [event for event in events if isinstance(event, dict)]
 
 
 def _evaluation_run_from_payload(path: Path, payload: object) -> dict[str, object] | None:

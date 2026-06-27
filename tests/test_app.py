@@ -70,6 +70,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'id="evaluationSummaryBtn"' in html
     assert "/api/candidate-review-sheet" in html
     assert "/api/save-candidate-review" in html
+    assert "/api/review-regression-summary" in html
+    assert 'id="reviewRegressionSummaryBtn"' in html
     assert "/api/device-status" in html
     assert "refreshDeviceStatus" in html
     assert 'id="outputFormat"' in html
@@ -323,6 +325,61 @@ def test_save_candidate_review_persists_precision_summary(tmp_path, monkeypatch)
     assert saved.exists()
     content = saved.read_text(encoding="utf-8")
     assert '"review_precision":0.666667' in content
+
+
+def test_review_regression_summary_reruns_detector_against_review_labels(tmp_path, monkeypatch):
+    review_dir = tmp_path / "reviews"
+    review_dir.mkdir()
+    video_path = tmp_path / "game.mp4"
+    video_path.write_bytes(b"fake-video")
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", review_dir)
+    review_payload = {
+        "review_id": "review-1",
+        "video_id": "video-1",
+        "rim": {"center_x": 100, "center_y": 80, "half_width": 42, "half_height": 50},
+        "events": [
+            {"id": "make-1", "video_path": str(video_path), "t_make": 10.0, "confidence": 0.9, "kept": True},
+            {"id": "make-2", "video_path": str(video_path), "t_make": 20.0, "confidence": 0.8, "kept": True},
+            {"id": "false-1", "video_path": str(video_path), "t_make": 30.0, "confidence": 0.7, "kept": False},
+        ],
+        "summary": {"candidate_count": 3, "accepted_count": 2, "rejected_count": 1, "review_precision": 0.666667},
+    }
+    (review_dir / "review-1.json").write_text(json.dumps(review_payload), encoding="utf-8")
+
+    detector_calls = []
+
+    def fake_detector(video_path_arg, rim, **kwargs):
+        detector_calls.append((video_path_arg, rim, kwargs))
+        return [
+            MadeShotEvent(id="make-current-1", video_path="", t_make=10.2, confidence=0.9),
+            MadeShotEvent(id="false-current-1", video_path="", t_make=30.1, confidence=0.7),
+            MadeShotEvent(id="unreviewed-current-1", video_path="", t_make=99.0, confidence=0.6),
+        ]
+
+    monkeypatch.setattr("hobby_basketball.app.scan_video_for_made_shots", fake_detector)
+    client = TestClient(app)
+
+    response = client.get("/api/review-regression-summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["review_count"] == 1
+    assert data["skipped_review_count"] == 0
+    assert data["reviewed_candidate_count"] == 3
+    assert data["accepted_label_count"] == 2
+    assert data["rejected_label_count"] == 1
+    assert data["accepted_preserved_count"] == 1
+    assert data["missed_accepted_count"] == 1
+    assert data["false_positive_recurrences"] == 1
+    assert data["rejected_suppressed_count"] == 0
+    assert data["unreviewed_prediction_count"] == 1
+    assert data["reviewed_precision"] == 0.5
+    assert data["accepted_recall"] == 0.5
+    assert data["rejected_suppression_rate"] == 0.0
+    assert data["target_met"] is False
+    assert data["metrics_scope"] == "reviewed_candidate_labels_only"
+    assert data["evaluated_review_ids"] == ["review-1"]
+    assert detector_calls[0][0] == video_path
 
 
 def test_evaluate_events_endpoint_returns_precision_recall_f1():
