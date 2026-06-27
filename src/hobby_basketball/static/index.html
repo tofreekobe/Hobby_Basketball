@@ -219,6 +219,7 @@
           <button id="detectBtn" onclick="detectCandidates()" disabled>识别候选</button>
           <button id="exportSelectedBtn" class="secondary" onclick="exportSelectedCandidates()" disabled>导出已选候选</button>
           <button id="reviewSheetBtn" class="secondary" onclick="generateReviewSheet()" disabled>生成候选审查图</button>
+          <button id="saveCandidateReviewBtn" class="secondary" onclick="saveCandidateReview()" disabled>保存候选复核</button>
           <label>人工标注进球时间</label>
           <textarea id="truthTimes" rows="3" placeholder="例如：18.4, 44.7, 51.2"></textarea>
           <button id="markTruthBtn" class="secondary" onclick="markCurrentTruthTime()" disabled>添加当前时间为标注</button>
@@ -329,6 +330,7 @@
           document.getElementById("detectBtn").disabled = false;
           document.getElementById("exportSelectedBtn").disabled = true;
           document.getElementById("reviewSheetBtn").disabled = true;
+          document.getElementById("saveCandidateReviewBtn").disabled = true;
           document.getElementById("evaluateBtn").disabled = true;
           document.getElementById("saveEvaluationBtn").disabled = true;
           document.getElementById("markTruthBtn").disabled = false;
@@ -529,6 +531,7 @@
           renderCandidateList(currentEvents);
           document.getElementById("exportSelectedBtn").disabled = currentEvents.length === 0;
           document.getElementById("reviewSheetBtn").disabled = currentEvents.length === 0;
+          document.getElementById("saveCandidateReviewBtn").disabled = currentEvents.length === 0;
           document.getElementById("evaluateBtn").disabled = currentEvents.length === 0;
           document.getElementById("saveEvaluationBtn").disabled = true;
           setOutput(data);
@@ -679,6 +682,30 @@
           button.disabled = currentEvents.length === 0;
           button.textContent = "生成候选审查图";
         }
+      }
+
+      async function saveCandidateReview() {
+        if (!currentVideoId || !currentEvents.length) {
+          setOutput("请先识别并复核候选事件。", true);
+          return;
+        }
+        const response = await fetch("/api/save-candidate-review", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            video_id: currentVideoId,
+            events: currentEvents,
+            reviewer: "manual",
+            rim: {
+              center_x: Number(document.getElementById("rimX").value),
+              center_y: Number(document.getElementById("rimY").value),
+              half_width: Number(document.getElementById("rimHalfWidth").value),
+              half_height: Number(document.getElementById("rimHalfHeight").value)
+            }
+          })
+        });
+        const data = await response.json();
+        setOutput(data, !response.ok);
       }
 
       function parseTruthTimes() {

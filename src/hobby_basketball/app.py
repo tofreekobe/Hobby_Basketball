@@ -127,6 +127,26 @@ class CandidateReviewSheetResponse(BaseModel):
     preview_url: str
 
 
+class SaveCandidateReviewRequest(BaseModel):
+    video_id: str
+    events: list[MadeShotEvent]
+    rim: RimCalibration | None = None
+    reviewer: str = "manual"
+
+
+class CandidateReviewSummary(BaseModel):
+    candidate_count: int
+    accepted_count: int
+    rejected_count: int
+    review_precision: float
+
+
+class SaveCandidateReviewResponse(BaseModel):
+    review_id: str
+    review_path: str
+    summary: CandidateReviewSummary
+
+
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
 VIDEO_REGISTRY: dict[str, Path] = {}
 
@@ -306,6 +326,44 @@ def candidate_review_sheet(request: CandidateReviewSheetRequest) -> CandidateRev
         sheet_id=sheet_id,
         review_path=str(review_path),
         preview_url=f"/api/reviews/{sheet_id}.jpg",
+    )
+
+
+@app.post("/api/save-candidate-review", response_model=SaveCandidateReviewResponse)
+def save_candidate_review(request: SaveCandidateReviewRequest) -> SaveCandidateReviewResponse:
+    if not request.events:
+        raise HTTPException(status_code=422, detail="No candidate events to review")
+
+    candidate_count = len(request.events)
+    accepted_count = sum(1 for event in request.events if event.kept)
+    rejected_count = candidate_count - accepted_count
+    summary = CandidateReviewSummary(
+        candidate_count=candidate_count,
+        accepted_count=accepted_count,
+        rejected_count=rejected_count,
+        review_precision=round(accepted_count / candidate_count, 6),
+    )
+
+    review_id = uuid.uuid4().hex
+    REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    review_path = REVIEW_DIR / f"{review_id}.json"
+    payload = {
+        "review_id": review_id,
+        "video_id": request.video_id,
+        "reviewer": request.reviewer,
+        "rim": request.rim.model_dump() if request.rim else None,
+        "events": [event.model_dump() for event in request.events],
+        "summary": summary.model_dump(),
+        "metrics_scope": "candidate_precision_only",
+    }
+    review_path.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    return SaveCandidateReviewResponse(
+        review_id=review_id,
+        review_path=str(review_path),
+        summary=summary,
     )
 
 

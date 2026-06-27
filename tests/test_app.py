@@ -54,6 +54,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'id="detectBtn"' in html
     assert 'id="exportSelectedBtn"' in html
     assert 'id="reviewSheetBtn"' in html
+    assert 'id="saveCandidateReviewBtn"' in html
     assert 'id="saveEvaluationBtn"' in html
     assert 'id="candidateList"' in html
     assert 'id="truthTimes"' in html
@@ -64,6 +65,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert "applyRecommendedThreshold" in html
     assert "/api/save-evaluation-run" in html
     assert "/api/candidate-review-sheet" in html
+    assert "/api/save-candidate-review" in html
     assert "/api/device-status" in html
     assert "refreshDeviceStatus" in html
     assert 'id="outputFormat"' in html
@@ -286,6 +288,37 @@ def test_candidate_review_sheet_persists_jpeg_for_uploaded_video(tmp_path, monke
     preview = client.get(data["preview_url"])
     assert preview.status_code == 200
     assert preview.headers["content-type"] == "image/jpeg"
+
+
+def test_save_candidate_review_persists_precision_summary(tmp_path, monkeypatch):
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", tmp_path / "reviews")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/save-candidate-review",
+        json={
+            "video_id": "video-1",
+            "events": [
+                {"id": "make-1", "video_path": "", "t_make": 10.0, "confidence": 0.9, "kept": True},
+                {"id": "make-2", "video_path": "", "t_make": 20.0, "confidence": 0.8, "kept": True},
+                {"id": "false-1", "video_path": "", "t_make": 30.0, "confidence": 0.7, "kept": False},
+            ],
+            "rim": {"center_x": 100, "center_y": 80, "half_width": 42, "half_height": 50},
+            "reviewer": "manual",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["candidate_count"] == 3
+    assert data["summary"]["accepted_count"] == 2
+    assert data["summary"]["rejected_count"] == 1
+    assert data["summary"]["review_precision"] == 0.666667
+    saved = tmp_path / "reviews" / f'{data["review_id"]}.json'
+    assert data["review_path"] == str(saved)
+    assert saved.exists()
+    content = saved.read_text(encoding="utf-8")
+    assert '"review_precision":0.666667' in content
 
 
 def test_evaluate_events_endpoint_returns_precision_recall_f1():
