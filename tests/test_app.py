@@ -383,9 +383,49 @@ def test_review_regression_summary_reruns_detector_against_review_labels(tmp_pat
     assert data["accepted_recall"] == 0.5
     assert data["rejected_suppression_rate"] == 0.0
     assert data["target_met"] is False
-    assert data["metrics_scope"] == "reviewed_candidate_labels_only"
+    assert data["metrics_scope"] == "reviewed_candidate_labels_with_unreviewed_prediction_gate"
     assert data["evaluated_review_ids"] == ["review-1"]
     assert detector_calls[0][0] == video_path
+
+
+def test_review_regression_summary_requires_reviewed_coverage_for_target(tmp_path, monkeypatch):
+    review_dir = tmp_path / "reviews"
+    review_dir.mkdir()
+    video_path = tmp_path / "game.mp4"
+    video_path.write_bytes(b"fake-video")
+    monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", review_dir)
+    monkeypatch.setattr("hobby_basketball.app.VIDEO_REGISTRY", {})
+    review_payload = {
+        "review_id": "review-1",
+        "video_id": "video-1",
+        "rim": {"center_x": 100, "center_y": 80, "half_width": 42, "half_height": 50},
+        "events": [
+            {"id": "make-1", "video_path": str(video_path), "t_make": 10.0, "confidence": 0.9, "kept": True},
+        ],
+        "summary": {"candidate_count": 1, "accepted_count": 1, "rejected_count": 0, "review_precision": 1.0},
+    }
+    (review_dir / "review-1.json").write_text(json.dumps(review_payload), encoding="utf-8")
+
+    def fake_detector(video_path_arg, rim, **kwargs):
+        return [
+            MadeShotEvent(id="make-current-1", video_path="", t_make=10.1, confidence=0.9),
+            MadeShotEvent(id="unreviewed-current-1", video_path="", t_make=99.0, confidence=0.6),
+        ]
+
+    monkeypatch.setattr("hobby_basketball.app.scan_video_for_made_shots", fake_detector)
+    client = TestClient(app)
+
+    response = client.get("/api/review-regression-summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["accepted_preserved_count"] == 1
+    assert data["false_positive_recurrences"] == 0
+    assert data["unreviewed_prediction_count"] == 1
+    assert data["reviewed_precision"] == 1.0
+    assert data["accepted_recall"] == 1.0
+    assert data["target_met"] is False
+    assert data["metrics_scope"] == "reviewed_candidate_labels_with_unreviewed_prediction_gate"
 
 
 def test_review_regression_summary_uses_all_reviews_for_same_video_and_rim(tmp_path, monkeypatch):

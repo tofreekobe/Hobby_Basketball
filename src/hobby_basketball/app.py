@@ -575,8 +575,9 @@ def review_regression_summary(
         target_met=bool(evaluated_review_ids)
         and reviewed_precision >= target_precision
         and accepted_recall >= target_recall
-        and false_positive_recurrences == 0,
-        metrics_scope="reviewed_candidate_labels_only",
+        and false_positive_recurrences == 0
+        and unreviewed_prediction_count == 0,
+        metrics_scope="reviewed_candidate_labels_with_unreviewed_prediction_gate",
         evaluated_review_ids=evaluated_review_ids,
         skipped_review_ids=skipped_review_ids,
     )
