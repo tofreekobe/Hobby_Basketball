@@ -609,7 +609,24 @@
           })
         });
         const data = await response.json();
+        if (response.ok) {
+          applyRecommendedThreshold(data);
+        }
         setOutput(data, !response.ok);
+      }
+
+      function applyRecommendedThreshold(report) {
+        const threshold = Number(report && report.recommended_threshold);
+        if (!Number.isFinite(threshold)) {
+          return;
+        }
+        document.getElementById("confidence").value = threshold.toFixed(6);
+        currentEvents = currentEvents.map((event) => ({
+          ...event,
+          kept: event.kept !== false && Number(event.confidence) >= threshold
+        }));
+        renderCandidateList(currentEvents);
+        document.getElementById("exportSelectedBtn").disabled = selectedEvents().length === 0;
       }
 
       async function processVideo() {

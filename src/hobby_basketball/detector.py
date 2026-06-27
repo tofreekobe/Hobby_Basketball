@@ -87,7 +87,8 @@ def scan_video_for_made_shots(
     finally:
         cap.release()
 
-    return detect_made_shots(samples, rim, video_path=str(video_path))
+    events = detect_made_shots(samples, rim, video_path=str(video_path))
+    return [event for event in events if event.confidence >= confidence]
 
 
 def _yolo_enabled(model_name: str) -> bool:

@@ -53,6 +53,7 @@ def test_index_contains_file_picker_and_export_controls():
     assert "markCurrentTruthTime" in html
     assert "/api/evaluate-candidates" in html
     assert "target_precision" in html
+    assert "applyRecommendedThreshold" in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
 

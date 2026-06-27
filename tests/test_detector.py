@@ -111,6 +111,39 @@ def test_scan_video_can_detect_make_without_yolo(tmp_path):
     assert 0.25 <= makes[0].t_make <= 0.55
 
 
+def test_scan_video_applies_confidence_to_final_fast_candidates(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    video_path = tmp_path / "synthetic_make.mp4"
+    writer = cv2.VideoWriter(
+        str(video_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        10.0,
+        (200, 160),
+    )
+    assert writer.isOpened()
+    for frame_index, position in enumerate([(100, 48), (100, 62), (100, 82), (100, 100)]):
+        frame = np.zeros((160, 200, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (78, 68), (122, 75), (240, 240, 240), 1)
+        cv2.circle(frame, position, 7, (0, 95, 255), -1)
+        writer.write(frame)
+    writer.release()
+
+    rim = RimCalibration(center_x=100, center_y=70, half_width=20, half_height=10)
+
+    makes = scan_video_for_made_shots(
+        video_path,
+        rim,
+        sample_fps=10.0,
+        confidence=0.99,
+        model_name="none",
+        device="cpu",
+    )
+
+    assert makes == []
+
+
 class FakeModel:
     def __init__(self, error: Exception | None = None):
         self.devices = []

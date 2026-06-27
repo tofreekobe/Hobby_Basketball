@@ -100,7 +100,9 @@ Targeting 95%+ means validating both precision and recall against a representati
 Use `/api/evaluate-candidates` or the GUI evaluation button after entering manual
 truth times to sweep candidate confidence thresholds. The report returns the
 recommended threshold, whether the 95% precision and 95% recall targets were
-met, and the full threshold table for tuning.
+met, and the full threshold table for tuning. In the GUI, the recommended
+threshold is copied back to the confidence field and candidates below it are
+unchecked before export.
 
 ## capcut-mate Integration
 
