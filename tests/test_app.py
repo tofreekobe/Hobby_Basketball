@@ -44,6 +44,9 @@ def test_index_contains_file_picker_and_export_controls():
     assert 'id="sampleFps"' in html
     assert 'id="sampleFps" type="number" step="0.5" min="1" max="15" value="12.0"' in html
     assert 'id="rimOverlay"' in html
+    assert 'id="rimHalfWidth" type="number" value="42"' in html
+    assert 'id="rimHalfHeight" type="number" value="50"' in html
+    assert "ensureUsableRimBox" in html
     assert "startRimDrag" in html
     assert 'id="detectBtn"' in html
     assert 'id="exportSelectedBtn"' in html

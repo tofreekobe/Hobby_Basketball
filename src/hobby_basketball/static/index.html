@@ -189,11 +189,11 @@
           <div class="row">
             <div>
               <label>篮筐半宽</label>
-              <input id="rimHalfWidth" type="number" value="30" min="1" />
+              <input id="rimHalfWidth" type="number" value="42" min="1" />
             </div>
             <div>
               <label>篮筐半高</label>
-              <input id="rimHalfHeight" type="number" value="12" min="1" />
+              <input id="rimHalfHeight" type="number" value="50" min="1" />
             </div>
           </div>
 
@@ -270,6 +270,8 @@
       let currentEvaluationReport = null;
       let rimDragStart = null;
       let suppressNextRimClickUntil = 0;
+      const MIN_RIM_HALF_WIDTH = 42;
+      const MIN_RIM_HALF_HEIGHT = 50;
 
       function setOutput(value, isError = false) {
         const output = document.getElementById("output");
@@ -354,6 +356,7 @@
         const {x, y} = point.video;
         document.getElementById("rimX").value = Math.round(x);
         document.getElementById("rimY").value = Math.round(y);
+        ensureUsableRimBox();
         drawRimOverlayFromInputs();
       }
 
@@ -395,10 +398,28 @@
           document.getElementById("rimY").value = Math.round((start.y + end.y) / 2);
           document.getElementById("rimHalfWidth").value = Math.round(halfWidth);
           document.getElementById("rimHalfHeight").value = Math.round(halfHeight);
-          updateRimOverlay(rimDragStart.client, point.client);
+          ensureUsableRimBox();
+          drawRimOverlayFromInputs();
           suppressNextRimClickUntil = Date.now() + 250;
         }
         rimDragStart = null;
+      }
+
+      function ensureUsableRimBox() {
+        const halfWidthInput = document.getElementById("rimHalfWidth");
+        const halfHeightInput = document.getElementById("rimHalfHeight");
+        const halfWidth = Number(halfWidthInput.value);
+        const halfHeight = Number(halfHeightInput.value);
+        if (!Number.isFinite(halfWidth) || halfWidth < MIN_RIM_HALF_WIDTH) {
+          halfWidthInput.value = MIN_RIM_HALF_WIDTH;
+        }
+        if (
+          !Number.isFinite(halfHeight) ||
+          halfHeight < MIN_RIM_HALF_HEIGHT ||
+          halfHeight < Number(halfWidthInput.value) * 0.8
+        ) {
+          halfHeightInput.value = MIN_RIM_HALF_HEIGHT;
+        }
       }
 
       function videoPoint(event) {

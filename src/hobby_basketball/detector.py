@@ -53,7 +53,8 @@ def scan_video_for_made_shots(
     stride = max(1, int(round(native_fps / sample_fps)))
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    x0, y0, x1, y1 = _rim_roi(rim, width, height)
+    detection_rim = _expand_thin_rim_line_to_net_region(rim, width, height)
+    x0, y0, x1, y1 = _rim_roi(detection_rim, width, height)
 
     device_state = _PredictionDeviceState(device)
     samples: list[BallSample] = []
@@ -78,16 +79,16 @@ def scan_video_for_made_shots(
                     device_state=device_state,
                     confidence=confidence,
                 )
-                yolo_sample = _best_ball_sample(results, x0, y0, rim, t)
-            color_sample = _best_color_ball_sample(crop, x0, y0, rim, t, previous_crop=previous_crop)
-            sample = _best_observed_ball_sample([yolo_sample, color_sample], rim)
+                yolo_sample = _best_ball_sample(results, x0, y0, detection_rim, t)
+            color_sample = _best_color_ball_sample(crop, x0, y0, detection_rim, t, previous_crop=previous_crop)
+            sample = _best_observed_ball_sample([yolo_sample, color_sample], detection_rim)
             if sample is not None:
                 samples.append(sample)
             previous_crop = crop.copy()
     finally:
         cap.release()
 
-    events = detect_made_shots(samples, rim, video_path=str(video_path))
+    events = detect_made_shots(samples, detection_rim, video_path=str(video_path))
     return [event for event in events if event.confidence >= confidence]
 
 
@@ -251,6 +252,22 @@ def _device_can_fallback_to_cpu(device_arg) -> bool:
         normalized = device_arg.strip().lower()
         return normalized in {"auto", "cuda", "cuda:0", "0"}
     return False
+
+
+def _expand_thin_rim_line_to_net_region(rim: RimCalibration, width: int, height: int) -> RimCalibration:
+    if max(width, height) < 500:
+        return rim
+    if rim.half_height >= 30 and rim.half_height >= rim.half_width * 0.8:
+        return rim
+
+    min_half_width = min(42.0, max(24.0, width * 0.12))
+    min_half_height = min(50.0, max(32.0, height * 0.07))
+    return rim.model_copy(
+        update={
+            "half_width": max(rim.half_width, min_half_width),
+            "half_height": max(rim.half_height, min_half_height),
+        }
+    )
 
 
 def _rim_roi(rim: RimCalibration, width: int, height: int) -> tuple[int, int, int, int]:

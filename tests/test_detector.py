@@ -155,6 +155,47 @@ def test_scan_video_applies_confidence_to_final_fast_candidates(tmp_path):
     assert makes == []
 
 
+def test_scan_video_expands_thin_rim_line_to_net_region(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    video_path = tmp_path / "thin_rim_make.mp4"
+    writer = cv2.VideoWriter(
+        str(video_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        12.0,
+        (544, 960),
+    )
+    assert writer.isOpened()
+    ball_positions = {
+        4: (251, 390),
+        5: (251, 412),
+        6: (251, 455),
+    }
+    for frame_index in range(16):
+        frame = np.zeros((960, 544, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (221, 388), (281, 412), (230, 230, 230), 2)
+        cv2.line(frame, (223, 412), (279, 470), (230, 230, 230), 1)
+        if frame_index in ball_positions:
+            cv2.circle(frame, ball_positions[frame_index], 9, (0, 95, 255), -1)
+        writer.write(frame)
+    writer.release()
+
+    narrow_rim_line = RimCalibration(center_x=251, center_y=400, half_width=30, half_height=12)
+
+    makes = scan_video_for_made_shots(
+        video_path,
+        narrow_rim_line,
+        sample_fps=12.0,
+        confidence=0.15,
+        model_name="none",
+        device="cpu",
+    )
+
+    assert len(makes) == 1
+    assert makes[0].notes == "rim-net entry"
+
+
 class FakeModel:
     def __init__(self, error: Exception | None = None):
         self.devices = []
