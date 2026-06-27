@@ -320,9 +320,7 @@ def _best_color_ball_sample(
         gray_diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
         _, motion_mask = cv2.threshold(gray_diff, 18, 255, cv2.THRESH_BINARY)
         motion_mask = cv2.dilate(motion_mask, np.ones((5, 5), dtype=np.uint8), iterations=1)
-        moving_orange = cv2.bitwise_and(orange_mask, motion_mask)
-        if cv2.countNonZero(moving_orange) >= 12:
-            orange_mask = moving_orange
+        orange_mask = cv2.bitwise_and(orange_mask, motion_mask)
 
     kernel = np.ones((3, 3), dtype=np.uint8)
     orange_mask = cv2.morphologyEx(orange_mask, cv2.MORPH_OPEN, kernel, iterations=1)

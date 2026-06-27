@@ -82,6 +82,22 @@ def test_color_ball_sample_prefers_moving_orange_blob_near_rim():
     assert sample.confidence >= 0.3
 
 
+def test_color_ball_sample_ignores_static_orange_rim_with_motion_context():
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    rim = RimCalibration(center_x=100, center_y=80, half_width=25, half_height=25)
+    previous = np.zeros((160, 220, 3), dtype=np.uint8)
+    current = previous.copy()
+    cv2.rectangle(previous, (72, 67), (128, 82), (0, 80, 255), -1)
+    cv2.line(previous, (78, 82), (122, 130), (0, 80, 255), 3)
+    current[:] = previous
+
+    sample = _best_color_ball_sample(current, 0, 0, rim, 2.0, previous_crop=previous)
+
+    assert sample is None
+
+
 def test_scan_video_can_detect_make_without_yolo(tmp_path):
     cv2 = pytest.importorskip("cv2")
     import numpy as np
