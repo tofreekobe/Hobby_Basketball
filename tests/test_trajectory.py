@@ -59,3 +59,23 @@ def test_detects_ball_entering_net_region_without_strict_upper_crossing():
     assert len(makes) == 1
     assert 18.0 <= makes[0].t_make <= 18.7
     assert makes[0].notes == "rim-net entry"
+
+
+def test_rejects_net_entry_that_drops_outward_on_same_side_of_rim():
+    rim = RimCalibration(center_x=927, center_y=141, half_width=42, half_height=50)
+    samples = [
+        BallSample(t=14.40, x=960.5, y=146.0, confidence=0.67),
+        BallSample(t=14.60, x=989.5, y=203.5, confidence=0.58),
+    ]
+
+    assert detect_made_shots(samples, rim) == []
+
+
+def test_rejects_shallow_side_entry_that_keeps_drifting_away_from_rim():
+    rim = RimCalibration(center_x=927, center_y=141, half_width=42, half_height=50)
+    samples = [
+        BallSample(t=14.30, x=950.0, y=130.5, confidence=0.68),
+        BallSample(t=14.50, x=973.5, y=169.0, confidence=0.53),
+    ]
+
+    assert detect_made_shots(samples, rim) == []

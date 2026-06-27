@@ -131,6 +131,8 @@ def _detect_rim_net_entries(
                 continue
             if later.y < rim.center_y:
                 continue
+            if _drops_outward_on_same_side(entry, later, rim):
+                continue
             exit_sample = later
             break
         if exit_sample is None:
@@ -170,6 +172,23 @@ def _bounced_back(
         if sample.y < y_above:
             return True
     return False
+
+
+def _drops_outward_on_same_side(
+    entry: BallSample,
+    exit_sample: BallSample,
+    rim: RimCalibration,
+    *,
+    side_start_frac: float = 0.5,
+    outward_shift_frac: float = 0.35,
+) -> bool:
+    entry_offset = entry.x - rim.center_x
+    exit_offset = exit_sample.x - rim.center_x
+    if entry_offset * exit_offset <= 0:
+        return False
+    if abs(entry_offset) < rim.half_width * side_start_frac:
+        return False
+    return abs(exit_offset) - abs(entry_offset) > rim.half_width * outward_shift_frac
 
 
 def _dedupe_makes(makes: list[MadeShotEvent], min_spacing_sec: float) -> list[MadeShotEvent]:
