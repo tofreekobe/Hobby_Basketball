@@ -592,6 +592,8 @@ def review_regression_sheet(
 
     sheet_id = uuid.uuid4().hex
     review_path = REVIEW_DIR / f"{sheet_id}.jpg"
+    if video_id:
+        VIDEO_REGISTRY[video_id] = video_path
     try:
         build_candidate_review_sheet(video_path, events, rim, review_path)
     except ValueError as exc:

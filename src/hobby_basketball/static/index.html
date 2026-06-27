@@ -737,6 +737,7 @@
         setOutput(data, !response.ok);
         if (response.ok && data.preview_url) {
           currentVideoId = data.video_id || currentVideoId;
+          document.getElementById("sourcePreview").src = `/api/videos/${currentVideoId}`;
           currentEvents = (data.events || []).map((event) => ({...event, kept: event.kept !== false}));
           renderCandidateList(currentEvents);
           document.getElementById("saveCandidateReviewBtn").disabled = currentEvents.length === 0;

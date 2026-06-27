@@ -75,6 +75,8 @@ def test_index_contains_file_picker_and_export_controls():
     assert "/api/review-regression-sheet" in html
     assert 'id="reviewRegressionSheetBtn"' in html
     assert "generateReviewRegressionSheet" in html
+    assert "sourcePreview" in html
+    assert "/api/videos/${currentVideoId}" in html
     assert "/api/device-status" in html
     assert "refreshDeviceStatus" in html
     assert 'id="outputFormat"' in html
@@ -336,6 +338,7 @@ def test_review_regression_summary_reruns_detector_against_review_labels(tmp_pat
     video_path = tmp_path / "game.mp4"
     video_path.write_bytes(b"fake-video")
     monkeypatch.setattr("hobby_basketball.app.REVIEW_DIR", review_dir)
+    monkeypatch.setattr("hobby_basketball.app.VIDEO_REGISTRY", {})
     review_payload = {
         "review_id": "review-1",
         "video_id": "video-1",
@@ -434,6 +437,9 @@ def test_review_regression_sheet_generates_unreviewed_candidate_sheet(tmp_path, 
     assert len(sheet_calls) == 1
     assert sheet_calls[0][0] == video_path
     assert [event.t_make for event in sheet_calls[0][1]] == [99.0]
+    preview = client.get("/api/videos/video-1")
+    assert preview.status_code == 200
+    assert preview.content == b"fake-video"
 
 
 def test_evaluate_events_endpoint_returns_precision_recall_f1():
