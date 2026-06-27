@@ -95,6 +95,7 @@
       video {
         width: 100%;
         max-height: 420px;
+        object-fit: contain;
         background: #0b1120;
         border-radius: 8px;
       }
@@ -427,16 +428,31 @@
         if (!video.videoWidth || !video.videoHeight) {
           return null;
         }
-        const rect = video.getBoundingClientRect();
-        const clientX = Math.min(Math.max(event.clientX, rect.left), rect.right);
-        const clientY = Math.min(Math.max(event.clientY, rect.top), rect.bottom);
+        const elementRect = video.getBoundingClientRect();
+        const contentRect = displayedVideoRect(video);
+        const clientX = Math.min(Math.max(event.clientX, contentRect.left), contentRect.right);
+        const clientY = Math.min(Math.max(event.clientY, contentRect.top), contentRect.bottom);
         return {
-          client: {x: clientX - rect.left, y: clientY - rect.top},
+          client: {x: clientX - elementRect.left, y: clientY - elementRect.top},
           video: {
-            x: (clientX - rect.left) * (video.videoWidth / rect.width),
-            y: (clientY - rect.top) * (video.videoHeight / rect.height)
+            x: (clientX - contentRect.left) * (video.videoWidth / contentRect.width),
+            y: (clientY - contentRect.top) * (video.videoHeight / contentRect.height)
           }
         };
+      }
+
+      function displayedVideoRect(video) {
+        const rect = video.getBoundingClientRect();
+        const videoAspect = video.videoWidth / video.videoHeight;
+        const elementAspect = rect.width / rect.height;
+        if (elementAspect > videoAspect) {
+          const width = rect.height * videoAspect;
+          const left = rect.left + (rect.width - width) / 2;
+          return {left, top: rect.top, width, height: rect.height, right: left + width, bottom: rect.bottom};
+        }
+        const height = rect.width / videoAspect;
+        const top = rect.top + (rect.height - height) / 2;
+        return {left: rect.left, top, width: rect.width, height, right: rect.right, bottom: top + height};
       }
 
       function updateRimOverlay(a, b) {
@@ -455,11 +471,14 @@
         if (!video.videoWidth || !video.videoHeight) {
           return;
         }
-        const rect = video.getBoundingClientRect();
-        const scaleX = rect.width / video.videoWidth;
-        const scaleY = rect.height / video.videoHeight;
-        const cx = Number(document.getElementById("rimX").value) * scaleX;
-        const cy = Number(document.getElementById("rimY").value) * scaleY;
+        const elementRect = video.getBoundingClientRect();
+        const contentRect = displayedVideoRect(video);
+        const offsetX = contentRect.left - elementRect.left;
+        const offsetY = contentRect.top - elementRect.top;
+        const scaleX = contentRect.width / video.videoWidth;
+        const scaleY = contentRect.height / video.videoHeight;
+        const cx = offsetX + Number(document.getElementById("rimX").value) * scaleX;
+        const cy = offsetY + Number(document.getElementById("rimY").value) * scaleY;
         const hw = Number(document.getElementById("rimHalfWidth").value) * scaleX;
         const hh = Number(document.getElementById("rimHalfHeight").value) * scaleY;
         updateRimOverlay({x: cx - hw, y: cy - hh}, {x: cx + hw, y: cy + hh});
