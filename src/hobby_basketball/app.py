@@ -7,6 +7,7 @@ import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -220,6 +221,12 @@ class EvaluationDatasetSummary(BaseModel):
 
 
 app = FastAPI(title="Hobby Basketball", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 VIDEO_REGISTRY: dict[str, Path] = {}
 
 

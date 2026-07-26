@@ -42,6 +42,14 @@ def test_index_contains_file_picker_and_export_controls():
     assert response.status_code == 200
     html = response.text
     assert 'type="file"' in html
+    assert "multiple" in html
+    assert "apiUrl(path)" in html
+    assert "LOCAL_API_ORIGIN" in html
+    assert 'location.protocol === "file:"' in html
+    assert "uploadVideos" in html
+    assert "for (const file of files)" in html
+    assert "renderVideoQueue" in html
+    assert "activateVideo" in html
     assert 'id="device"' in html
     assert 'value="cpu" selected' in html
     assert 'id="sampleFps"' in html
@@ -83,6 +91,23 @@ def test_index_contains_file_picker_and_export_controls():
     assert "refreshDeviceStatus" in html
     assert 'id="outputFormat"' in html
     assert "执行识别并剪辑" in html
+
+
+def test_file_page_can_preflight_upload_api():
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/upload-video",
+        headers={
+            "Origin": "null",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert "POST" in response.headers["access-control-allow-methods"]
 
 
 def test_upload_video_saves_file_and_returns_preview_url():
